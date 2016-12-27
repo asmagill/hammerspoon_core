@@ -75,7 +75,7 @@ local showAlert = function(message, style, screenObj, duration)
     local textFont  = thisAlertStyle.textFont
     local textColor = thisAlertStyle.textColor
 
-    if type(thisAlertStyle.textStyle) == "table" then
+    if type(thisAlertStyle.textStyle) == "table" and getmetatable(message) ~= stextMT then
         if not thisAlertStyle.textStyle.font then
             thisAlertStyle.textStyle.font = { name = textFont, size = textSize }
         end
@@ -85,7 +85,7 @@ local showAlert = function(message, style, screenObj, duration)
         textSize  = thisAlertStyle.textStyle.font.size
         textFont  = thisAlertStyle.textStyle.font.name
         textColor = thisAlertStyle.textStyle.color
-        message = stext(message, thisAlertStyle.textStyle)
+        message   = stext(message, thisAlertStyle.textStyle)
     end
 
     local screenFrame = screenObj:fullFrame()
@@ -185,7 +185,7 @@ module.show = function(message, ...)
             error("unexpected type " .. type(v) .. " found for argument " .. tostring(i + 1), 2)
         end
     end
-    if not (type(message) == "userdata" and getmetatable(message) == stextMT) then
+    if getmetatable(message) ~= stextMT then
         message = tostring(message)
     end
     duration  = duration or 2.0
