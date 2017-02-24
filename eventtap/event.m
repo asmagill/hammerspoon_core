@@ -371,7 +371,7 @@ static int eventtap_event_setProperty(lua_State* L) {
 ///  * An `hs.eventtap.event` object
 ///
 /// Notes:
-///  * The original version of this constructor utilized a shortcut which merged `keyChange` and `keyUp`/`keyDown` events into one.  This approach is still supported for backwards compatibility and because it *does* work in most cases.
+///  * The original version of this constructor utilized a shortcut which merged `flagsChanged` and `keyUp`/`keyDown` events into one.  This approach is still supported for backwards compatibility and because it *does* work in most cases.
 ///  * According to Apple Documentation, the proper way to perform a keypress with modifiers is through multiple key events; for example to generate 'Å', you should do the following:
 /// ~~~lua
 ///     hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.shift, true):post()
@@ -381,7 +381,7 @@ static int eventtap_event_setProperty(lua_State* L) {
 ///     hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.alt, false):post()
 ///     hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.shift, false):post()
 /// ~~~
-///  * The shortcut method is still supported, though if you run into odd behavior or need to generate `keyChange` events without a corresponding `keyUp` or `keyDown`, please check out the syntax demonstrated above.
+///  * The shortcut method is still supported, though if you run into odd behavior or need to generate `flagsChanged` events without a corresponding `keyUp` or `keyDown`, please check out the syntax demonstrated above.
 /// ~~~lua
 ///     hs.eventtap.event.newKeyEvent({"shift", "alt"}, "a", true):post()
 ///     hs.eventtap.event.newKeyEvent({"shift", "alt"}, "a", false):post()

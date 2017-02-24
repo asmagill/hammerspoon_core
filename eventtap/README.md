@@ -3,6 +3,8 @@ hs.eventtap
 
 This is a modified version of the Hammerspoon core module `hs.eventtap`.  This version adds support for creating `flagsChanged` events independant of other key events.  It is uncertain if this will eventually be merged into the core application because I am also working on a complete re-write of event handling and generation in an effort to reduce latency when many eventtaps are running concurrently and to more closely integrate eventaps with the `hs.hotkey` module in an attempt to address some of the idiosyncrasies and limitations of that module as well.
 
+Note that in addition to the changes outlined below, minor adjustments were made to the source code to remove warnings during compilation. These changes should not affect the behavior of this module since they just make explicit some defaults that the compiler was assuming anyways. If you suspect that these changes have in fact altered the module behavior, please submit an issue so that I can examine it more closely and see what might need further adjustment.
+
 ### Installation
 
 A precompiled version of this module can be found in this directory with a name along the lines of `eventtap-v0.x.tar.gz`. This can be installed by downloading the file and then expanding it as follows:
@@ -69,7 +71,7 @@ Returns:
  * An `hs.eventtap.event` object
 
 Notes:
- * The original version of this constructor utilized a shortcut which merged `keyChange` and `keyUp`/`keyDown` events into one.  This approach is still supported for backwards compatibility and because it *does* work in most cases.
+ * The original version of this constructor utilized a shortcut which merged `flagsChanged` and `keyUp`/`keyDown` events into one.  This approach is still supported for backwards compatibility and because it *does* work in most cases.
 
  * According to Apple Documentation, the proper way to perform a keypress with modifiers is through multiple key events; for example to generate 'Å', you *should* do the following:
 ~~~lua
@@ -80,7 +82,7 @@ Notes:
    hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.alt, false):post()
    hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.shift, false):post()
 ~~~
- * The shortcut method is still supported, though if you run into odd behavior or need to generate `keyChange` events without a corresponding `keyUp` or `keyDown`, please check out the syntax demonstrated above.
+ * The shortcut method is still supported, though if you run into odd behavior or need to generate `flagsChanged` events without a corresponding `keyUp` or `keyDown`, please check out the syntax demonstrated above.
 ~~~lua
    hs.eventtap.event.newKeyEvent({"shift", "alt"}, "a", true):post()
    hs.eventtap.event.newKeyEvent({"shift", "alt"}, "a", false):post()
