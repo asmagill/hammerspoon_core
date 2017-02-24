@@ -1,3 +1,3 @@
-The code here includes two methods which could be used to generate `flagChange` events directly but are currently buggy.  It was discovered during development that modifying `hs.eventtap.event.newKeyEvent` could be done more cleanly and without introducing a syntax that seems counter-intuitive to the existing methods.
+The code here includes two methods which could be used to generate `flagsChanged` events directly but are currently buggy.  It was discovered during development that modifying `hs.eventtap.event.newKeyEvent` could be done more cleanly and without introducing a syntax that seems counter-intuitive to the existing methods.
 
 If it is determined that it may be possible to generate events not covered by the additions already made to the `newKeyEvent` method, I will revisit these, but at present they are considered buggy and error prone.  Probably safest to ignore them unless you want to debug them yourself.

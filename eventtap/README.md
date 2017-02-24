@@ -1,7 +1,7 @@
 hs.eventtap
 ===========
 
-This is a modified version of the Hammerspoon core module `hs.eventtap`.  This version adds support for creating `flagChange` events independant of other key events.  It is uncertain if this will eventually be merged into the core application because I am also working on a complete re-write of event handling and generation in an effort to reduce latency when many eventtaps are running concurrently and to more closely integrate eventaps with the `hs.hotkey` module in an attempt to address some of the idiosyncrasies and limitations of that module as well.
+This is a modified version of the Hammerspoon core module `hs.eventtap`.  This version adds support for creating `flagsChanged` events independant of other key events.  It is uncertain if this will eventually be merged into the core application because I am also working on a complete re-write of event handling and generation in an effort to reduce latency when many eventtaps are running concurrently and to more closely integrate eventaps with the `hs.hotkey` module in an attempt to address some of the idiosyncrasies and limitations of that module as well.
 
 ### Installation
 
@@ -46,7 +46,7 @@ The same caveats about the `HS_APPLICATION` and `PREFIX` environment variables d
 
 ### Usage
 
-`hs.eventtap.event.newKeyEvent` has been modified so that it can generate `flagChanged` events or `keyUp`/`keyDown` events.  According to Apple's current documentation for the `CGEventCreateKeyboardEvent` function, this is the preferred approach and the Hammerspoon constructor as originally defined uses a shortcut which may not work in all instances.  For backwards compatibility (and because in most cases it *does* work as expected), this shortcut which allows combining multiple modifiers and a single key up or down event into one event is still supported by Hammerspoon, but see the Notes section of the constructors documentation for a description of how Apple recommends arranging things.
+`hs.eventtap.event.newKeyEvent` has been modified so that it can generate `flagsChanged` events or `keyUp`/`keyDown` events.  According to Apple's current documentation for the `CGEventCreateKeyboardEvent` function, this is the preferred approach and the Hammerspoon constructor as originally defined uses a shortcut which may not work in all instances.  For backwards compatibility (and because in most cases it *does* work as expected), this shortcut which allows combining multiple modifiers and a single key up or down event into one event is still supported by Hammerspoon, but see the Notes section of the constructors documentation for a description of how Apple recommends arranging things.
 
 - - -
 
