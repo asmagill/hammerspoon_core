@@ -1,0 +1,96 @@
+kVK_Command       55    kVK_RightCommand  54
+kVK_Shift         56    kVK_RightShift    60
+kVK_Option        58    kVK_RightOption   61
+kVK_Control       59    kVK_RightControl  62
+kVK_CapsLock      57
+kVK_Function      63
+
+help                4194304
+numericPad          2097152
+secondaryFn         8388608
+nonCoalesced        256
+alphaShift          65536     alphaShiftStateless       16777216  deviceAlphaShiftStateless 128
+shift               131072    deviceLeftShift           2         deviceRightShift          4
+alternate           524288    deviceLeftAlternate       32        deviceRightAlternate      64
+command             1048576   deviceLeftCommand         8         deviceRightCommand        16
+control             262144    deviceLeftControl         1         deviceRightControl        8192
+
+> a = hs.eventtap.new({hs.eventtap.event.types.flagsChanged}, function(e) print(timestamp(), finspect(e:getRawEventData().CGEventData)) end):start()
+
+2017-02-22 09:14:17.7811  { flags = 1048840, keycode = 55, type = 12 }
+                          kVK_Command command+deviceLeftCommand+nonCoalesced
+2017-02-22 09:14:18.2112  { flags = 1573160, keycode = 58, type = 12 }
+                          kVK_Option alternate+deviceLeftAlternate + command+deviceLeftCommand+nonCoalesced
+2017-02-22 09:14:18.8164  { flags = 524576, keycode = 55, type = 12 }
+                          kVK_Command alternate+deviceLeftAlternate+nonCoalesced
+2017-02-22 09:14:18.8245  { flags = 256, keycode = 58, type = 12 }
+                          kVK_Option nonCoalesced
+
+2017-02-22 09:14:20.7363  { flags = 1048848, keycode = 54, type = 12 }
+                          kVK_RightCommand command+deviceLeftCommand+nonCoalesced
+2017-02-22 09:14:21.2122  { flags = 1573200, keycode = 61, type = 12 }
+                          kVK_RightOption alternate+deviceRightAlternate + command+deviceLeftCommand+nonCoalesced
+2017-02-22 09:14:21.7204  { flags = 1048848, keycode = 61, type = 12 }
+                          kVK_RightOption command+deviceLeftCommand+nonCoalesced
+2017-02-22 09:14:21.7232  { flags = 256, keycode = 54, type = 12 }
+                          kVK_RightCommand nonCoalesced
+
+
+
+2017-02-22 09:33:10.6211  { flags = 65792, keycode = 57, type = 12 }
+                          kVK_CapsLock alphaShift+nonCoalesced
+2017-02-22 09:33:11.8343  { flags = 256, keycode = 57, type = 12 }
+                          kVK_CapsLock nonCoalesced
+
+2017-02-22 09:33:13.3693  { flags = 8388864, keycode = 63, type = 12 }
+                          kVK_Function secondaryFN+nonCoalesced
+2017-02-22 09:33:13.5011  { flags = 256, keycode = 63, type = 12 }
+                          kVK_Function nonCoalesced
+
+2017-02-22 09:33:14.5844  { flags = 131330, keycode = 56, type = 12 }
+                          kVK_Shift+shift+deviceLeftShift+nonCoalesced
+2017-02-22 09:33:14.7484  { flags = 256, keycode = 56, type = 12 }
+                          kVK_Shift nonCoalesced
+
+2017-02-22 09:33:15.0844  { flags = 262401, keycode = 59, type = 12 }
+                          kVK_Control control+devideLeftControl+nonCoalesced
+2017-02-22 09:33:15.2164  { flags = 256, keycode = 59, type = 12 }
+                          kVK_Control nonCoalesced
+
+2017-02-22 09:33:15.5494  { flags = 524576, keycode = 58, type = 12 }
+                          kVK_Option alternate+deviceLeftAlternate+nonCoalesced
+2017-02-22 09:33:15.681   { flags = 256, keycode = 58, type = 12 }
+                          kVK_Option nonCoalesced
+
+2017-02-22 09:33:15.9884  { flags = 1048840, keycode = 55, type = 12 }
+                          kVK_Command command+deviceLeftCommand+nonCoalesced
+2017-02-22 09:33:16.1244  { flags = 256, keycode = 55, type = 12 }
+                          kVK_Command nonCoalesced
+
+2017-02-22 09:33:19.7002  { flags = 131332, keycode = 60, type = 12 }
+                          kVK_RightShift shift+deviceRightShift+nonCoalesced
+2017-02-22 09:33:19.8924  { flags = 256, keycode = 60, type = 12 }
+                          kVK_RightShift nonCoalesced
+
+2017-02-22 09:33:20.6602  { flags = 524608, keycode = 61, type = 12 }
+                          kVK_RightOption alternate+deviceRightAlternate+nonCoalesced
+2017-02-22 09:33:20.8284  { flags = 256, keycode = 61, type = 12 }
+                          kVK_RightOption nonCoalesced
+
+2017-02-22 09:33:21.2032  { flags = 1048848, keycode = 54, type = 12 }
+                          kVK_RightCommand command+deviceRightCommand+nonCoalesced
+2017-02-22 09:33:21.3393  { flags = 256, keycode = 54, type = 12 }
+                          kVK_RightCommand nonCoalesced
+
+
+
+2017-02-22 16:54:27.5327	{ flags = 1048840, keycode = 55, type = 12 }
+2017-02-22 16:54:27.5404	{ flags = 1310985, keycode = 59, type = 12 }
+2017-02-22 16:54:27.5445	{ flags = 1835305, keycode = 58, type = 12 }
+2017-02-22 16:54:27.5516	{ flags = 1966379, keycode = 56, type = 12 }
+
+2017-02-22 16:54:27.7805	{ flags = 1442059, keycode = 58, type = 12 }
+2017-02-22 16:54:27.7883	{ flags = 1179914, keycode = 59, type = 12 }
+2017-02-22 16:54:27.7923	{ flags = 131330, keycode = 55, type = 12 }
+2017-02-22 16:54:27.7964	{ flags = 256, keycode = 56, type = 12 }
+
