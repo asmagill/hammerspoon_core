@@ -5,6 +5,12 @@ This is a modified version of the Hammerspoon core module `hs.eventtap`.  This v
 
 Note that in addition to the changes outlined below, minor adjustments were made to the source code to remove warnings during compilation. These changes should not affect the behavior of this module since they just make explicit some defaults that the compiler was assuming anyways. If you suspect that these changes have in fact altered the module behavior, please submit an issue so that I can examine it more closely and see what might need further adjustment.
 
+### Changes
+
+* v0.2 - passing `{}` (i.e. the empty table) as modifier table to `hs.eventtap.event.newKeyEvent` or `hs.eventtap.keyStroke` clears any existing modifier flags explicitly posted that are currently in the "down" state.  Omitting this table or setting the argument to an explicit `nil` does not (i.e. behaves as described in the docs for `newKeyEvent`.
+
+* v0.1 - initial release
+
 ### Installation
 
 A precompiled version of this module can be found in this directory with a name along the lines of `eventtap-v0.x.tar.gz`. This can be installed by downloading the file and then expanding it as follows:

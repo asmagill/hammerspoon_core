@@ -1,11 +1,14 @@
 #import "eventtap_event.h"
 @import IOKit.hidsystem ;
 
-static CGEventSourceRef eventSource;
+static CGEventSourceRef eventSource = NULL;
 
 static int eventtap_event_gc(lua_State* L) {
     CGEventRef event = *(CGEventRef*)luaL_checkudata(L, 1, EVENT_USERDATA_TAG);
     CFRelease(event);
+    // Remove the Metatable so future use of the variable in Lua won't think its valid
+    lua_pushnil(L) ;
+    lua_setmetatable(L, 1) ;
     return 0;
 }
 
@@ -27,6 +30,14 @@ static int eventtap_event_copy(lua_State* L) {
 
     return 1;
 }
+
+// static int eventtap_event_create(lua_State* L) {
+//     CGEventRef copy = CGEventCreate(eventSource);
+//     new_eventtap_event(L, copy);
+//     CFRelease(copy);
+//
+//     return 1;
+// }
 
 /// hs.eventtap.event:getFlags() -> table
 /// Method
@@ -398,12 +409,10 @@ static int eventtap_event_newKeyEvent(lua_State* L) {
 
     if (lua_type(L, 1) == LUA_TTABLE) {
         [skin checkArgs:LS_TTABLE, LS_TNUMBER | LS_TINTEGER, LS_TBOOLEAN | LS_TOPTIONAL, LS_TBREAK] ;
-        BOOL tableEmpty = YES ;
         const char *modifier;
 
         lua_pushnil(L);
         while (lua_next(L, 1) != 0) {
-            tableEmpty = NO ;
             modifier = lua_tostring(L, -1);
             if (!modifier) {
                 [skin logBreadcrumb:[NSString stringWithFormat:@"hs.eventtap.event.newKeyEvent() unexpected entry in modifiers table: %d", lua_type(L, -1)]];
@@ -418,7 +427,7 @@ static int eventtap_event_newKeyEvent(lua_State* L) {
             else if (strcmp(modifier, "fn") == 0) flags |= kCGEventFlagMaskSecondaryFn;
             lua_pop(L, 1);
         }
-        hasModTable = !tableEmpty ;
+        hasModTable = YES ;
     } else if (lua_type(L, 1) == LUA_TNIL) {
         [skin checkArgs:LS_TNIL, LS_TNUMBER | LS_TINTEGER, LS_TBOOLEAN | LS_TOPTIONAL, LS_TBREAK] ;
     } else {
@@ -427,10 +436,6 @@ static int eventtap_event_newKeyEvent(lua_State* L) {
     }
     BOOL         isDown  = (BOOL)lua_toboolean(L, keyCodePos + 1) ;
     CGKeyCode    keyCode = (CGKeyCode)lua_tointeger(L, keyCodePos) ;
-
-    if (!eventSource) {
-        eventSource = CGEventSourceCreate(kCGEventSourceStatePrivate);
-    }
 
     CGEventRef keyevent = CGEventCreateKeyboardEvent(eventSource, keyCode, isDown);
     if (hasModTable) CGEventSetFlags(keyevent, flags);
@@ -587,10 +592,6 @@ static int eventtap_event_newScrollWheelEvent(lua_State* L) {
     unit = lua_tostring(L, 3);
     if (unit && strcmp(unit, "pixel") == 0) type = kCGScrollEventUnitPixel; else type = kCGScrollEventUnitLine;
 
-    if (!eventSource) {
-        eventSource = CGEventSourceCreate(kCGEventSourceStatePrivate);
-    }
-
     CGEventRef scrollEvent = CGEventCreateScrollWheelEvent(eventSource, type, 2, offset_x, offset_y);
     CGEventSetFlags(scrollEvent, flags);
     new_eventtap_event(L, scrollEvent);
@@ -631,10 +632,6 @@ static int eventtap_event_newMouseEvent(lua_State* L) {
             else if (strcmp(modifier, "fn") == 0) flags |= kCGEventFlagMaskSecondaryFn;
             lua_pop(L, 1);
         }
-    }
-
-    if (!eventSource) {
-        eventSource = CGEventSourceCreate(kCGEventSourceStatePrivate);
     }
 
     CGEventRef event = CGEventCreateMouseEvent(eventSource, type, point, button);
@@ -994,7 +991,7 @@ static int userdata_tostring(lua_State* L) {
 static int meta_gc(lua_State* __unused L) {
     if (eventSource) {
         CFRelease(eventSource);
-        eventSource = nil;
+        eventSource = NULL;
     }
     return 0;
 }
@@ -1048,7 +1045,7 @@ int luaopen_hs_eventtap_event(lua_State* L) {
     push_modifierKeys(L) ;
     lua_setfield(L, -2, "modifierKeys") ;
 
-    eventSource = nil;
-
+    eventSource = CGEventSourceCreate(kCGEventSourceStatePrivate);
+//     eventSource = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
     return 1;
 }
