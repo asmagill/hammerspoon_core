@@ -9,8 +9,8 @@
 
 NSPoint hs_topoint(lua_State* L, int idx) {
     luaL_checktype(L, idx, LUA_TTABLE);
-    CGFloat x = (lua_getfield(L, idx, "x"), luaL_checknumber(L, -1));
-    CGFloat y = (lua_getfield(L, idx, "y"), luaL_checknumber(L, -1));
+    CGFloat x = ((void)lua_getfield(L, idx, "x"), luaL_checknumber(L, -1));
+    CGFloat y = ((void)lua_getfield(L, idx, "y"), luaL_checknumber(L, -1));
     lua_pop(L, 2);
     return NSMakePoint(x, y);
 }
