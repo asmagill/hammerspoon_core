@@ -11,7 +11,6 @@ static int refTable = LUA_NOREF;
 #pragma mark - Support Functions and Classes
 
 @interface HSIPCMessagePort : NSObject
-@property NSString           *name ;
 @property CFMessagePortRef   messagePort ;
 @property int                callbackRef ;
 @end
@@ -20,29 +19,33 @@ static CFDataRef ipc2_callback(__unused CFMessagePortRef local, SInt32 msgid, CF
     LuaSkin          *skin   = [LuaSkin shared];
     HSIPCMessagePort *port   = (__bridge HSIPCMessagePort *)info ;
     CFDataRef        outdata = NULL ;
+
     if (port.callbackRef != LUA_NOREF) {
         lua_State *L = skin.L ;
         [skin pushLuaRef:refTable ref:port.callbackRef] ;
         [skin pushNSObject:port] ;
         lua_pushinteger(L, msgid) ;
         [skin pushNSObject:(__bridge NSData *)data] ;
-        [skin protectedCallAndTraceback:3 nresults:1] ; // we want one result anyways, be it correct or an error
+        BOOL status = [skin protectedCallAndTraceback:3 nresults:1] ;
+
         luaL_tolstring(L, -1, NULL) ;                   // make sure it's a string
-        NSData *result = [skin toNSObjectAtIndex:-1 withOptions:LS_NSLuaStringAsDataOnly] ;
+        NSData *flag = status ? [@"+" dataUsingEncoding:NSUTF8StringEncoding] : [@"-" dataUsingEncoding:NSUTF8StringEncoding] ;
+        NSMutableData *result = [[NSMutableData alloc] initWithData:flag] ;
+        [result appendData:[skin toNSObjectAtIndex:-1 withOptions:LS_NSLuaStringAsDataOnly]] ;
         lua_pop(L, 2) ;                                 // remove the result and the tostring version
+
         if (result) outdata = (__bridge_retained CFDataRef)result ;
     } else {
-        [skin logWarn:[NSString stringWithFormat:@"%s:callback - no callback function defined for %@", USERDATA_TAG, port.name]] ;
+        [skin logWarn:[NSString stringWithFormat:@"%s:callback - no callback function defined for %@", USERDATA_TAG, (__bridge NSString *)CFMessagePortGetName(port.messagePort)]] ;
     }
     return outdata ;
 }
 
 @implementation HSIPCMessagePort
 
-- (instancetype)initWithName:(NSString *)portName {
+- (instancetype)init {
     self = [super init] ;
     if (self) {
-        _name        = portName ;
         _messagePort = NULL ;
         _callbackRef = LUA_NOREF ;
     }
@@ -53,116 +56,83 @@ static CFDataRef ipc2_callback(__unused CFMessagePortRef local, SInt32 msgid, CF
 
 #pragma mark - Module Functions
 
-/// hs.ipc2.new(name) -> ipcObject
+/// hs.ipc2.localPort(name, fn) -> ipcObject
 /// Constructor
-/// Create a new ipcObject representing a message port.
+/// Create a new local ipcObject for receiving and responding to messages from a remote port
+///
+/// Parameters:
+///  * name - a string acting as the message port name.
+///  * fn   - the callback function which will receive messages.
+///
+/// Returns:
+///  * the ipc object
+///
+/// Notes:
+///  * a remote port can send messages at any time to a local port; a local port can only respond to messages from a remote port
+static int ipc2_localPort(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TSTRING, LS_TFUNCTION, LS_TBREAK] ;
+    NSString *portName = [skin toNSObjectAtIndex:1] ;
+
+    HSIPCMessagePort *port = [[HSIPCMessagePort alloc] init] ;
+    if (port) {
+        lua_pushvalue(L, 2) ;
+        port.callbackRef = [skin luaRef:refTable] ;
+
+        CFMessagePortContext ctx = { 0, (__bridge void *)port, NULL, NULL, NULL } ;
+        Boolean error = false ;
+        port.messagePort = CFMessagePortCreateLocal(NULL, (__bridge CFStringRef)portName, ipc2_callback, &ctx, &error) ;
+
+        if (error) {
+            NSString *errorMsg = port.messagePort ? @"local port name already in use" : @"failed to create new local port" ;
+            if (port.messagePort) CFRelease(port.messagePort) ;
+            port.messagePort = NULL ;
+            return luaL_error(L, errorMsg.UTF8String) ;
+        }
+
+        CFRunLoopSourceRef runLoop = CFMessagePortCreateRunLoopSource(NULL, port.messagePort, 0) ;
+        if (runLoop) {
+            CFRunLoopAddSource(CFRunLoopGetMain(), runLoop, kCFRunLoopCommonModes);
+            CFRelease(runLoop) ;
+        } else {
+            CFRelease(port.messagePort) ;
+            port.messagePort = nil ;
+            return luaL_error(L, "unable to create runloop source for local port") ;
+        }
+    } else {
+        return luaL_error(L, "failed to create new local port") ;
+    }
+    [skin pushNSObject:port] ;
+    return 1 ;
+}
+
+/// hs.ipc2.remotePort(name) -> ipcObject
+/// Constructor
+/// Create a new remote ipcObject for sending messages asynchronously to a local port
 ///
 /// Parameters:
 ///  * name - a string acting as the message port name.
 ///
 /// Returns:
 ///  * the ipc object
-static int ipc2_new(lua_State *L) {
+///
+/// Notes:
+///  * a remote port can send messages at any time to a local port; a local port can only respond to messages from a remote port
+static int ipc2_remotePort(lua_State *L) {
     LuaSkin *skin = [LuaSkin shared] ;
     [skin checkArgs:LS_TSTRING, LS_TBREAK] ;
+    NSString *portName = [skin toNSObjectAtIndex:1] ;
 
-    HSIPCMessagePort *newPort = [[HSIPCMessagePort alloc] initWithName:[skin toNSObjectAtIndex:1]] ;
-    if (newPort) {
-        [skin pushNSObject:newPort] ;
-    } else {
-        lua_pushnil(L) ;
+    HSIPCMessagePort *port = [[HSIPCMessagePort alloc] init] ;
+    if (port) port.messagePort = CFMessagePortCreateRemote(NULL, (__bridge CFStringRef)portName) ;
+    if (!(port && port.messagePort)) {
+        return luaL_error(L, "failed to create new remote port") ;
     }
+    [skin pushNSObject:port] ;
     return 1 ;
 }
 
 #pragma mark - Module Methods
-
-/// hs.ipc2:start() -> ipcObject
-/// Method
-/// Start the message port and enable communication with outside processes
-///
-/// Parameters:
-///  * None
-///
-/// Returns:
-///  * the ipc object
-///
-/// Notes:
-///  * if an error occurs or if a message port with this object's name is already listening, generates an error.
-static int ipc2_start(lua_State *L) {
-    LuaSkin *skin = [LuaSkin shared] ;
-    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK] ;
-    HSIPCMessagePort *port = [skin toNSObjectAtIndex:1] ;
-
-    if (!port.messagePort) {
-        CFMessagePortContext ctx = { 0, (__bridge void *)port, NULL, NULL, NULL } ;
-        Boolean error = false ;
-        port.messagePort = CFMessagePortCreateLocal(kCFAllocatorDefault, (__bridge CFStringRef)port.name, ipc2_callback, &ctx, &error) ;
-
-        if (error) {
-            NSString *errorMsg = port.messagePort ? @"port name already in use" : @"failed to create new port" ;
-            port.messagePort = nil ;
-            return luaL_error(L, errorMsg.UTF8String) ;
-        }
-
-        CFRunLoopSourceRef runLoop = CFMessagePortCreateRunLoopSource(kCFAllocatorDefault, port.messagePort, 0) ;
-        if (runLoop) {
-            CFRunLoopAddSource(CFRunLoopGetMain(), runLoop, kCFRunLoopCommonModes);
-            CFRelease(runLoop) ;
-        } else {
-            return luaL_error(L, "unable to create runloop source") ;
-        }
-    } else {
-        [LuaSkin logDebug:[NSString stringWithFormat:@"%s:start - message port already already started", USERDATA_TAG]] ;
-    }
-
-    lua_pushvalue(L, 1) ;
-    return 1 ;
-}
-
-/// hs.ipc2:stop() -> ipcObject
-/// Method
-/// Stop the message port.
-///
-/// Parameters:
-///  * None
-///
-/// Returns:
-///  * the ipc object
-static int ipc2_stop(lua_State *L) {
-    LuaSkin *skin = [LuaSkin shared] ;
-    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK] ;
-    HSIPCMessagePort *port = [skin toNSObjectAtIndex:1] ;
-
-    if (port.messagePort) {
-        CFMessagePortInvalidate(port.messagePort) ;
-        CFRelease(port.messagePort) ;
-        port.messagePort = NULL ;
-    } else {
-        [LuaSkin logDebug:[NSString stringWithFormat:@"%s:start - message port not active", USERDATA_TAG]] ;
-    }
-
-    lua_pushvalue(L, 1) ;
-    return 1 ;
-}
-
-/// hs.ipc2:active() -> boolean
-/// Method
-/// Indicates whether or not the ipcObject is currently active and listening for communications or not.
-///
-/// Parameters:
-///  * None
-///
-/// Returns:
-///  * a boolean indicating whether or not the ipcObject is currently listening
-static int ipc2_active(lua_State *L) {
-    LuaSkin *skin = [LuaSkin shared] ;
-    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK] ;
-    HSIPCMessagePort *port = [skin toNSObjectAtIndex:1] ;
-
-    lua_pushboolean(L, port.messagePort != nil) ;
-    return 1 ;
-}
 
 /// hs.ipc2:name() -> string
 /// Method
@@ -172,41 +142,103 @@ static int ipc2_active(lua_State *L) {
 ///  * None
 ///
 /// Returns:
-///  * the name as a string
+///  * the port name as a string
 static int ipc2_name(__unused lua_State *L) {
     LuaSkin *skin = [LuaSkin shared] ;
     [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK] ;
     HSIPCMessagePort *port = [skin toNSObjectAtIndex:1] ;
 
-    [skin pushNSObject:port.name] ;
+    [skin pushNSObject:(__bridge NSString *)CFMessagePortGetName(port.messagePort)] ;
     return 1 ;
 }
 
-/// hs.ipc2:setCallback(fn) -> ipcObject
+/// hs.ipc2:isRemote() -> boolean
 /// Method
-/// Set or remove the callback function for the ipcObject
+/// Returns whether or not the ipcObject represents a remote or local port
 ///
 /// Parameters:
-///  * fn - the callback function.  Specify an explicit nil to remove the callback from this ipcObject.
+///  * None
 ///
 /// Returns:
-///  * the ipcObject
+///  * true if the object is a remote port, otherwise false
 ///
 /// Notes:
-///  * the callback function should expect something and maybe even return something.  Not sure.
-static int ipc2_setCallback(lua_State *L) {
+///  * a remote port can send messages at any time to a local port; a local port can only respond to messages from a remote port
+static int ipc2_isRemote(lua_State *L) {
     LuaSkin *skin = [LuaSkin shared] ;
-    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TFUNCTION | LS_TNIL, LS_TBREAK] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK] ;
     HSIPCMessagePort *port = [skin toNSObjectAtIndex:1] ;
 
-    port.callbackRef = [skin luaUnref:refTable ref:port.callbackRef] ;
-    if ([skin luaTypeAtIndex:2] == LUA_TFUNCTION) {
-        lua_pushvalue(L, 2);
-        port.callbackRef = [skin luaRef:refTable] ;
+    lua_pushboolean(L, CFMessagePortIsRemote(port.messagePort)) ;
+    return 1 ;
+}
+
+/// hs.ipc2:isValid() -> boolean
+/// Method
+/// Returns whether or not the ipcObject port is still valid or not
+///
+/// Parameters:
+///  * None
+///
+/// Returns:
+///  * true if the object is a valid port, otherwise false
+static int ipc2_isValid(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK] ;
+    HSIPCMessagePort *port = [skin toNSObjectAtIndex:1] ;
+
+    lua_pushboolean(L, CFMessagePortIsValid(port.messagePort)) ;
+    return 1 ;
+}
+
+/// hs.ipc2:sendMessage(data, msgID, [waitTimeout]) -> status, response
+/// Method
+/// Sends a message from a remote port to a local port
+///
+/// Parameters:
+///  * data  - any data type which is to be sent to the local port.  The data will be converted into its string representation
+///  * msgID - an integer message ID
+///  * waitTimeout - an optional number, default 2.0, representing the number of seconds the method will wait to send the message and then wait for a response.  The method *may* block up to twice this number of seconds, though usually it will be shorter.
+///
+/// Returns:
+///  * status   - a boolean indicathing whether or not the local port responded before the timeout (true) or if an error or timeout occurred waiting for the response (false)
+///  * response - the response from the local port, usually a string, but may be nil if there was no response returned.  If status is false, will contain an error message describing the error.
+static int ipc2_sendMessage(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TANY, LS_TNUMBER | LS_TINTEGER, LS_TNUMBER | LS_TOPTIONAL, LS_TBREAK] ;
+    HSIPCMessagePort *port = [skin toNSObjectAtIndex:1] ;
+
+    if (!CFMessagePortIsRemote(port.messagePort)) {
+        return luaL_error(L, "not a remote port") ;
+    }
+    lua_Integer msgID = lua_tointeger(L, 3) ;
+    CFTimeInterval waitTimeout = (lua_gettop(L) == 4) ? lua_tonumber(L, 4) : 2.0 ;
+    luaL_tolstring(L, 2, NULL) ; // make sure it's a string
+    NSData *data = [skin toNSObjectAtIndex:-1 withOptions:LS_NSLuaStringAsDataOnly] ;
+    lua_pop(L, 1) ;
+
+    CFDataRef returnedData;
+    SInt32 code = CFMessagePortSendRequest(port.messagePort, (SInt32)msgID, (__bridge CFDataRef)data, waitTimeout, waitTimeout, kCFRunLoopDefaultMode, &returnedData);
+    BOOL status = (code == kCFMessagePortSuccess) ;
+
+    NSData *response ;
+    if (status) {
+        response = returnedData ? (__bridge_transfer NSData *)returnedData : nil ;
+    } else {
+        NSString *errMsg = [NSString stringWithFormat:@"unrecognized error: %d", code] ;
+        switch(code) {
+            case kCFMessagePortSendTimeout:        errMsg = @"send timeout" ; break ;
+            case kCFMessagePortReceiveTimeout:     errMsg = @"receive timeout" ; break ;
+            case kCFMessagePortIsInvalid:          errMsg = @"message port invalid" ; break ;
+            case kCFMessagePortTransportError:     errMsg = @"error during transport" ; break ;
+            case kCFMessagePortBecameInvalidError: errMsg = @"message port was invalidated" ; break ;
+        }
+        response = [errMsg dataUsingEncoding:NSUTF8StringEncoding] ;
     }
 
-    lua_pushvalue(L, 1);
-    return 1;
+    lua_pushboolean(L, status) ;
+    [skin pushNSObject:response] ;
+    return 2 ;
 }
 
 #pragma mark - Module Constants
@@ -241,7 +273,7 @@ id toHSIPCMessagePortFromLua(lua_State *L, int idx) {
 static int userdata_tostring(lua_State* L) {
     LuaSkin *skin = [LuaSkin shared] ;
     HSIPCMessagePort *obj = [skin luaObjectAtIndex:1 toClass:"HSIPCMessagePort"] ;
-    NSString *title = [NSString stringWithFormat:@"%@ - %@", obj.name, (obj.messagePort ? @"running" : @"stopped")] ;
+    NSString *title = [NSString stringWithFormat:@"%@, %@", (__bridge NSString *)CFMessagePortGetName(obj.messagePort), (CFMessagePortIsRemote(obj.messagePort) ? @"remote" : @"local")] ;
     [skin pushNSObject:[NSString stringWithFormat:@"%s: %@ (%p)", USERDATA_TAG, title, lua_topointer(L, 1)]] ;
     return 1 ;
 }
@@ -294,12 +326,11 @@ static int userdata_gc(lua_State* L) {
 
 // Metatable for userdata objects
 static const luaL_Reg userdata_metaLib[] = {
-    {"start",       ipc2_start},
-    {"stop",        ipc2_stop},
-    {"active",      ipc2_active},
-    {"setCallback", ipc2_setCallback},
     {"name",        ipc2_name},
     {"delete",      userdata_gc},
+    {"isRemote",    ipc2_isRemote},
+    {"isValid",     ipc2_isValid},
+    {"sendMessage", ipc2_sendMessage},
 
     {"__tostring",  userdata_tostring},
     {"__eq",        userdata_eq},
@@ -309,8 +340,9 @@ static const luaL_Reg userdata_metaLib[] = {
 
 // Functions for returned object when module loads
 static luaL_Reg moduleLib[] = {
-    {"new", ipc2_new},
-    {NULL,  NULL}
+    {"localPort",  ipc2_localPort},
+    {"remotePort", ipc2_remotePort},
+    {NULL,         NULL}
 };
 
 // // Metatable for module, if needed

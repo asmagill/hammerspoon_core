@@ -234,7 +234,7 @@ module.cliUninstall = function(path, silent)
     return not module.cliStatus(path, silent)
 end
 
-module.__default = module.new("hsCommandLine"):setCallback(function(self, msgID, msg)
+module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
     local raw = (msgID == -1)
     local originalprint = print
     local fakestdout = ""
@@ -259,7 +259,7 @@ module.__default = module.new("hsCommandLine"):setCallback(function(self, msgID,
 
     print = originalprint
     return "ipc2 --> " .. fakestdout .. str
-end):start()
+end)
 
 -- Return Module Object --------------------------------------------------
 
