@@ -1,6 +1,8 @@
 #import "eventtap_event.h"
 @import IOKit.hidsystem ;
 
+#define FLAGS_TAG "hs.eventtap.event.flags"
+
 static CGEventSourceRef eventSource = NULL;
 
 static int eventtap_event_gc(lua_State* L) {
@@ -53,6 +55,17 @@ static int eventtap_event_copy(lua_State* L) {
 ///   * shift
 ///   * ctrl
 ///   * fn
+///  * The table responds to the following methods:
+///   * contain(mods) -> boolean
+///    * Returns true if the modifiers contain all of given modifiers
+///   * containExactly(mods) -> boolean
+///    * Returns true if the modifiers contain all of given modifiers exactly and nothing else
+///  * Parameter mods is a table containing zero or more of the following:
+///   * cmd or ⌘
+///   * alt or ⌥
+///   * shift or ⇧
+///   * ctrl or ⌃
+///   * fn
 static int eventtap_event_getFlags(lua_State* L) {
     CGEventRef event = *(CGEventRef*)luaL_checkudata(L, 1, EVENT_USERDATA_TAG);
 
@@ -63,6 +76,9 @@ static int eventtap_event_getFlags(lua_State* L) {
     if (curAltkey & kCGEventFlagMaskControl) { lua_pushboolean(L, YES); lua_setfield(L, -2, "ctrl"); }
     if (curAltkey & kCGEventFlagMaskCommand) { lua_pushboolean(L, YES); lua_setfield(L, -2, "cmd"); }
     if (curAltkey & kCGEventFlagMaskSecondaryFn) { lua_pushboolean(L, YES); lua_setfield(L, -2, "fn"); }
+
+    luaL_getmetatable(L, FLAGS_TAG);
+    lua_setmetatable(L, -2);
     return 1;
 }
 
@@ -389,20 +405,18 @@ static int eventtap_event_setProperty(lua_State* L) {
 ///  * The original version of this constructor utilized a shortcut which merged `flagsChanged` and `keyUp`/`keyDown` events into one.  This approach is still supported for backwards compatibility and because it *does* work in most cases.
 ///  * According to Apple Documentation, the proper way to perform a keypress with modifiers is through multiple key events; for example to generate 'Å', you should do the following:
 /// ~~~lua
-///     hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.shift, true):post()
-///     hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.alt, true):post()
+///     hs.eventtap.event.newKeyEvent(hs.keycodes.map.shift, true):post()
+///     hs.eventtap.event.newKeyEvent(hs.keycodes.map.alt, true):post()
 ///     hs.eventtap.event.newKeyEvent("a", true):post()
 ///     hs.eventtap.event.newKeyEvent("a", false):post()
-///     hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.alt, false):post()
-///     hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.shift, false):post()
+///     hs.eventtap.event.newKeyEvent(hs.keycodes.map.alt, false):post()
+///     hs.eventtap.event.newKeyEvent(hs.keycodes.map.shift, false):post()
 /// ~~~
 ///  * The shortcut method is still supported, though if you run into odd behavior or need to generate `flagsChanged` events without a corresponding `keyUp` or `keyDown`, please check out the syntax demonstrated above.
 /// ~~~lua
 ///     hs.eventtap.event.newKeyEvent({"shift", "alt"}, "a", true):post()
 ///     hs.eventtap.event.newKeyEvent({"shift", "alt"}, "a", false):post()
 /// ~~~
-///
-/// * The additional virtual keycodes for the modifier keys have been added to the [hs.eventtap.event.modifierKeys](#modifierKeys) table.  Note that these will probably move to `hs.keycodes` once the refectoring of `hs.eventtap` has been completed.
 ///
 /// * The shortcut approach is still limited to generating only the left version of modifiers.
 static int eventtap_event_newKeyEvent(lua_State* L) {
@@ -949,41 +963,6 @@ static void pushpropertiestable(lua_State* L) {
     lua_pushinteger(L, kCGScrollWheelEventIsContinuous);                     lua_setfield(L, -2, "scrollWheelEventIsContinuous");
 }
 
-/// hs.eventtap.event.modifierKeys[]
-/// Constant
-/// Keycodes for modifiers not currently defined in `hs.keycodes`. Use with [hs.eventtap.event.newKeyEvent](#newKeyEvent).
-///
-/// Currently the following are defined in this table:
-///  * `cmd`        - the left Command modifier key (or only, if the keyboard only has one)
-///  * `shift`      - the left Shift modifier key (or only, if the keyboard only has one)
-///  * `alt`        - the left Option or Alt modifier key (or only, if the keyboard only has one)
-///  * `ctrl`       - the left Control modifier key (or only, if the keyboard only has one)
-///  * `rightCmd`   - the right Command modifier key, if present on the keyboard
-///  * `rightShift` - the right Shift modifier key, if present on the keyboard
-///  * `rightAlt`   - the right Option or Alt modifier key, if present on the keyboard
-///  * `rightCtrl`  - the right Control modifier key, if present on the keyboard
-///  * `capsLock`   - the Caps Lock toggle
-///  * `fn`         - the Function modifier key found on many laptops
-///
-/// Notes:
-///  * These will probably move to `hs.keycodes` once the refectoring of `hs.eventtap` has been completed.
-///  * These keycodes should only be used with [hs.eventtap.event.newKeyEvent](#newKeyEvent) when no `mods` table is included in the constructor arguments. Doing so will result in unexpected or broken behavior.
-static int push_modifierKeys(lua_State *L) {
-    lua_newtable(L) ;
-    lua_pushinteger(L, kVK_Command) ;      lua_setfield(L, -2, "cmd") ;
-    lua_pushinteger(L, kVK_Shift) ;        lua_setfield(L, -2, "shift") ;
-    lua_pushinteger(L, kVK_CapsLock) ;     lua_setfield(L, -2, "capsLock") ;
-    lua_pushinteger(L, kVK_Option) ;       lua_setfield(L, -2, "alt") ;
-    lua_pushinteger(L, kVK_Control) ;      lua_setfield(L, -2, "ctrl") ;
-    lua_pushinteger(L, kVK_RightCommand) ; lua_setfield(L, -2, "rightCmd") ;
-    lua_pushinteger(L, kVK_RightShift) ;   lua_setfield(L, -2, "rightShift") ;
-    lua_pushinteger(L, kVK_RightOption) ;  lua_setfield(L, -2, "rightAlt") ;
-    lua_pushinteger(L, kVK_RightControl) ; lua_setfield(L, -2, "rightCtrl") ;
-    lua_pushinteger(L, kVK_Function) ;     lua_setfield(L, -2, "fn") ;
-
-    return 1 ;
-}
-
 static int userdata_tostring(lua_State* L) {
     CGEventRef event = *(CGEventRef*)luaL_checkudata(L, 1, EVENT_USERDATA_TAG);
     CGEventType eventType = CGEventGetType(event) ;
@@ -1026,7 +1005,6 @@ static luaL_Reg eventtapeventlib[] = {
     {"newSystemKeyEvent",  eventtap_event_newSystemKeyEvent},
     {"_newMouseEvent",     eventtap_event_newMouseEvent},
     {"newScrollEvent",     eventtap_event_newScrollWheelEvent},
-
     {NULL,                NULL}
 };
 
@@ -1035,6 +1013,63 @@ static const luaL_Reg meta_gcLib[] = {
     {"__gc",    meta_gc},
     {NULL,      NULL}
 };
+
+static CGEventFlags flagsFromTable(lua_State* L, int arg) {
+    luaL_checktype(L, arg, LUA_TTABLE);
+
+    CGEventFlags flags = 0;
+    if (lua_getfield(L, arg, "cmd"),   lua_toboolean(L, -1)) flags |= kCGEventFlagMaskCommand;
+    if (lua_getfield(L, arg, "alt"),   lua_toboolean(L, -1)) flags |= kCGEventFlagMaskAlternate;
+    if (lua_getfield(L, arg, "ctrl"),  lua_toboolean(L, -1)) flags |= kCGEventFlagMaskControl;
+    if (lua_getfield(L, arg, "shift"), lua_toboolean(L, -1)) flags |= kCGEventFlagMaskShift;
+    if (lua_getfield(L, arg, "fn"),    lua_toboolean(L, -1)) flags |= kCGEventFlagMaskSecondaryFn;
+
+    return flags;
+}
+
+static CGEventFlags flagsFromArray(lua_State* L, int arg) {
+    luaL_checktype(L, arg, LUA_TTABLE);
+
+    CGEventFlags flags = 0;
+    const char *modifier;
+    lua_pushnil(L);
+    while (lua_next(L, arg) != 0) {
+        modifier = lua_tostring(L, -1);
+        if (!modifier) {
+            LuaSkin *skin = [LuaSkin shared];
+            [skin logBreadcrumb:[NSString stringWithFormat:@"hs.eventtap.event.flags: unexpected entry in modifiers table: %d", lua_type(L, -1)]];
+            lua_pop(L, 1);
+            continue;
+        }
+
+        if (strcmp(modifier, "cmd") == 0 || strcmp(modifier, "⌘") == 0) flags |= kCGEventFlagMaskCommand;
+        else if (strcmp(modifier, "ctrl") == 0 || strcmp(modifier, "⌃") == 0) flags |= kCGEventFlagMaskControl;
+        else if (strcmp(modifier, "alt") == 0 || strcmp(modifier, "⌥") == 0) flags |= kCGEventFlagMaskAlternate;
+        else if (strcmp(modifier, "shift") == 0 || strcmp(modifier, "⇧") == 0) flags |= kCGEventFlagMaskShift;
+        else if (strcmp(modifier, "fn") == 0) flags |= kCGEventFlagMaskSecondaryFn;
+        lua_pop(L, 1);
+    }
+
+    return flags;
+}
+
+static int flags_contain(lua_State* L) {
+    CGEventFlags eventFlags = flagsFromTable(L, 1);
+    CGEventFlags flags = flagsFromArray(L, 2);
+
+    lua_pushboolean(L, (eventFlags & flags) == flags);
+
+    return 1;
+}
+
+static int flags_containExactly(lua_State* L) {
+    CGEventFlags eventFlags = flagsFromTable(L, 1);
+    CGEventFlags flags = flagsFromArray(L, 2);
+
+    lua_pushboolean(L, eventFlags == flags);
+
+    return 1;
+}
 
 int luaopen_hs_eventtap_event(lua_State* L) {
     LuaSkin *skin = [LuaSkin shared];
@@ -1046,8 +1081,18 @@ int luaopen_hs_eventtap_event(lua_State* L) {
     pushpropertiestable(L);
     lua_setfield(L, -2, "properties");
 
-    push_modifierKeys(L) ;
-    lua_setfield(L, -2, "modifierKeys") ;
+    eventSource = nil;
+
+    luaL_newmetatable(L, FLAGS_TAG);
+
+    lua_newtable(L);
+    lua_pushcfunction(L, flags_contain);
+    lua_setfield(L, -2, "contain");
+    lua_pushcfunction(L, flags_containExactly);
+    lua_setfield(L, -2, "containExactly");
+
+    lua_setfield(L, -2, "__index");
+    lua_pop(L, 1);
 
     eventSource = CGEventSourceCreate(kCGEventSourceStatePrivate);
 //     eventSource = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);

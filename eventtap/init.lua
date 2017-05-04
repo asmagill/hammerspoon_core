@@ -19,78 +19,42 @@ local timer    = require("hs.timer")
 
 -- private variables and methods -----------------------------------------
 
-local _kMetaTable = {}
-_kMetaTable._k = setmetatable({}, {__mode = "k"})
-_kMetaTable._t = setmetatable({}, {__mode = "k"})
-_kMetaTable.__index = function(obj, key)
-        if _kMetaTable._k[obj] then
-            if _kMetaTable._k[obj][key] then
-                return _kMetaTable._k[obj][key]
-            else
-                for k,v in pairs(_kMetaTable._k[obj]) do
-                    if v == key then return k end
-                end
-            end
+local __tostring_for_tables = function(self)
+    local result = ""
+    local width = 0
+    for i,v in fnutils.sortByKeys(self) do
+        if type(i) == "string" and width < i:len() then width = i:len() end
+    end
+    for i,v in fnutils.sortByKeys(self) do
+        if type(i) == "string" then
+            result = result..string.format("%-"..tostring(width).."s %d\n", i, v)
         end
-        return nil
     end
-_kMetaTable.__newindex = function(obj, key, value)
-        error("attempt to modify a table of constants",2)
-        return nil
-    end
-_kMetaTable.__pairs = function(obj) return pairs(_kMetaTable._k[obj]) end
-_kMetaTable.__len = function(obj) return #_kMetaTable._k[obj] end
-_kMetaTable.__tostring = function(obj)
-        local result = ""
-        if _kMetaTable._k[obj] then
-            local width = 0
-            for k,v in pairs(_kMetaTable._k[obj]) do width = width < #tostring(k) and #tostring(k) or width end
-            for k,v in require("hs.fnutils").sortByKeys(_kMetaTable._k[obj]) do
-                if _kMetaTable._t[obj] == "table" then
-                    result = result..string.format("%-"..tostring(width).."s %s\n", tostring(k),
-                        ((type(v) == "table") and "{ table }" or tostring(v)))
-                else
-                    result = result..((type(v) == "table") and "{ table }" or tostring(v)).."\n"
-                end
-            end
-        else
-            result = "constants table missing"
-        end
-        return result
-    end
-_kMetaTable.__metatable = _kMetaTable -- go ahead and look, but don't unset this
+    return result
+end
 
-local _makeConstantsTable
-_makeConstantsTable = function(theTable)
-    if type(theTable) ~= "table" then
-        local dbg = debug.getinfo(2)
-        local msg = dbg.short_src..":"..dbg.currentline..": attempting to make a '"..type(theTable).."' into a constant table"
-        if module.log then module.log.ef(msg) else print(msg) end
-        return theTable
-    end
-    for k,v in pairs(theTable) do
-        if type(v) == "table" then
-            local count = 0
-            for a,b in pairs(v) do count = count + 1 end
-            local results = _makeConstantsTable(v)
-            if #v > 0 and #v == count then
-                _kMetaTable._t[results] = "array"
-            else
-                _kMetaTable._t[results] = "table"
+local __index_for_types = function(object, key)
+    for i,v in pairs(object) do
+        if type(i) == "string" then -- ignore numbered keys
+            if i:lower() == key then
+                print(debug.getinfo(2).short_src..":"..debug.getinfo(2).currentline..": type '"..key.."' is deprecated, use '"..i.."'")
+                return object[i]
             end
-            theTable[k] = results
         end
     end
-    local results = setmetatable({}, _kMetaTable)
-    _kMetaTable._k[results] = theTable
-    local count = 0
-    for a,b in pairs(theTable) do count = count + 1 end
-    if #theTable > 0 and #theTable == count then
-        _kMetaTable._t[results] = "array"
-    else
-        _kMetaTable._t[results] = "table"
+    return nil
+end
+
+local __index_for_props = function(object, key)
+    for i,v in pairs(object) do
+        if type(i) == "string" then -- ignore numbered keys
+            if i:sub(1,1):upper()..i:sub(2,-1) == key then
+                print(debug.getinfo(2).short_src..":"..debug.getinfo(2).currentline..": property '"..key.."' is deprecated, use '"..i.."'")
+                return object[i]
+            end
+        end
     end
-    return results
+    return nil
 end
 
 local function getKeycode(s)
@@ -121,9 +85,10 @@ local function getMods(mods)
   return r
 end
 
-module.event.types        = _makeConstantsTable(module.event.types)
-module.event.properties   = _makeConstantsTable(module.event.properties)
-module.event.modifierKeys = _makeConstantsTable(module.event.modifierKeys)
+module.event.types      = setmetatable(module.event.types,      { __index    = __index_for_types,
+                                                                  __tostring = __tostring_for_tables })
+module.event.properties = setmetatable(module.event.properties, { __index    = __index_for_props,
+                                                                  __tostring = __tostring_for_tables })
 
 -- Public interface ------------------------------------------------------
 
@@ -263,40 +228,6 @@ function module.keyStroke(modifiers, character, delay)
     module.event.newKeyEvent(modifiers, character, true):post()
     timer.usleep(delay)
     module.event.newKeyEvent(modifiers, character, false):post()
-
--- Follows Apple's proper practices, but breaks backwards compatibility of this being an "isolated"
--- set of events.  Keeping as a reminder for consideration during rewrite.
---
---    modifiers = getMods(modifiers)
---    for _, v in ipairs(modifiers) do
---        if v == "⌘" then
---            module.event.newKeyEvent(module.modifierKeys.cmd, true):post()
---        elseif v == "⌃" then
---            module.event.newKeyEvent(module.modifierKeys.ctrl, true):post()
---        elseif v == "⌥" then
---            module.event.newKeyEvent(module.modifierKeys.alt, true):post()
---        elseif v == "⇧" then
---            module.event.newKeyEvent(module.modifierKeys.shift, true):post()
---        elseif v == "fn" then
---            module.event.newKeyEvent(module.modifierKeys.fn, true):post()
---        end
---    end
---    module.event.newKeyEvent(character, true):post()
---    timer.usleep(delay)
---    module.event.newKeyEvent(character, false):post()
---    for _, v in ipairs(modifiers) do
---        if v == "⌘" then
---            module.event.newKeyEvent(module.modifierKeys.cmd, false):post()
---        elseif v == "⌃" then
---            module.event.newKeyEvent(module.modifierKeys.ctrl, false):post()
---        elseif v == "⌥" then
---            module.event.newKeyEvent(module.modifierKeys.alt, false):post()
---        elseif v == "⇧" then
---            module.event.newKeyEvent(module.modifierKeys.shift, false):post()
---        elseif v == "fn" then
---            module.event.newKeyEvent(module.modifierKeys.fn, false):post()
---        end
---    end
 end
 
 

@@ -70,7 +70,7 @@ Parameters:
   * shift
   * ctrl
   * fn
- * key - A string containing the name of a key (see `hs.hotkey` for more information) or an integer specifying the virtual keycode for the key (see `hs.keycodes.map` and [hs.eventtap.event.modifierKeys](#modifierKeys))
+ * key - A string containing the name of a key (see `hs.hotkey` for more information) or an integer specifying the virtual keycode for the key (see `hs.keycodes.map`)
  * isdown - A boolean, true if the event should be a key-down, false if it should be a key-up
 
 Returns:
@@ -81,12 +81,12 @@ Notes:
 
  * According to Apple Documentation, the proper way to perform a keypress with modifiers is through multiple key events; for example to generate 'Å', you *should* do the following:
 ~~~lua
-   hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.shift, true):post()
-   hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.alt, true):post()
+   hs.eventtap.event.newKeyEvent(hs.keycodes.map.shift, true):post()
+   hs.eventtap.event.newKeyEvent(hs.keycodes.map.alt, true):post()
    hs.eventtap.event.newKeyEvent("a", true):post()
    hs.eventtap.event.newKeyEvent("a", false):post()
-   hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.alt, false):post()
-   hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.shift, false):post()
+   hs.eventtap.event.newKeyEvent(hs.keycodes.map.alt, false):post()
+   hs.eventtap.event.newKeyEvent(hs.keycodes.map.shift, false):post()
 ~~~
  * The shortcut method is still supported, though if you run into odd behavior or need to generate `flagsChanged` events without a corresponding `keyUp` or `keyDown`, please check out the syntax demonstrated above.
 ~~~lua
@@ -94,36 +94,11 @@ Notes:
    hs.eventtap.event.newKeyEvent({"shift", "alt"}, "a", false):post()
 ~~~
 
-* The additional virtual keycodes for the modifier keys have been added to the [hs.eventtap.event.modifierKeys](#modifierKeys) table.  Note that these will probably move to `hs.keycodes` once the refectoring of `hs.eventtap` has been completed.
-
 * The shortcut approach is still limited to generating only the left version of modifiers.
 
 - - -
 
 The following table contains the virtual keycodes required by [hs.eventtap.event.newKeyEvent](#newKeyEvent) to generate the appropriate `flagsChanged` events for modifier keys.
-
-- - -
-
-~~~lua
-hs.eventtap.event.modifierKeys[]
-~~~
-Keycodes for modifiers not currently defined in `hs.keycodes`. Use with [hs.eventtap.event.newKeyEvent](#newKeyEvent).
-
-Currently the following are defined in this table:
- * `cmd`        - the left Command modifier key (or only, if the keyboard only has one)
- * `shift`      - the left Shift modifier key (or only, if the keyboard only has one)
- * `alt`        - the left Option or Alt modifier key (or only, if the keyboard only has one)
- * `ctrl`       - the left Control modifier key (or only, if the keyboard only has one)
- * `rightCmd`   - the right Command modifier key, if present on the keyboard
- * `rightShift` - the right Shift modifier key, if present on the keyboard
- * `rightAlt`   - the right Option or Alt modifier key, if present on the keyboard
- * `rightCtrl`  - the right Control modifier key, if present on the keyboard
- * `capsLock`   - the Caps Lock toggle
- * `fn`         - the Function modifier key found on many laptops
-
-Notes:
- * These will probably move to `hs.keycodes` once the refectoring of `hs.eventtap` has been completed.
- * These keycodes should only be used with [hs.eventtap.event.newKeyEvent](#newKeyEvent) when no `mods` table is included in the constructor arguments. Doing so will result in unexpected or broken behavior.
 
 - - -
 

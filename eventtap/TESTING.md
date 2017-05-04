@@ -30,7 +30,7 @@ flatinspect = function(what)
                 return hs.eventtap.event.types[i] or i
             elseif p[#p] == "keycode" then
                 -- displays the actual key instead of the keycode number
-                return hs.keycodes.map[i] or hs.eventtap.event.modifierKeys[i] or i
+                return hs.keycodes.map[i] or i
             else
                 return i
             end
@@ -52,12 +52,12 @@ a = hs.eventtap.new({
 end):start()
 
 -- trigger the command down
-hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.cmd, true):post()
+hs.eventtap.event.newKeyEvent(hs.keycodes.map.cmd, true):post()
 
 -- after a delay of 7 seconds, send the command key up
 -- (it can take a few seconds to generate the display and I want it up long enough to confirm it works)
 b = hs.timer.doAfter(7, function()
-    hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.cmd, false):post()
+    hs.eventtap.event.newKeyEvent(hs.keycodes.map.cmd, false):post()
     -- and then wait a second so we can see the eventtap messages and then kill it as well
     b = hs.timer.doAfter(1, function() a:stop() end)
 end)
@@ -97,11 +97,11 @@ end):start()
 -- left option key
 
 -- trigger the rightAlt down
-hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.rightAlt, true):post()
+hs.eventtap.event.newKeyEvent(hs.keycodes.map.rightAlt, true):post()
 
 -- after a delay of 5 seconds, send the rightAlt key up
 b = hs.timer.doAfter(5, function()
-    hs.eventtap.event.newKeyEvent(hs.eventtap.event.modifierKeys.rightAlt, false):post()
+    hs.eventtap.event.newKeyEvent(hs.keycodes.map.rightAlt, false):post()
     -- and then wait a second so we can see the eventtap messages and then kill it as well
     b = hs.timer.doAfter(1, function() a:stop() end)
 end)
