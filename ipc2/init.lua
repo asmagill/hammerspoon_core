@@ -20,6 +20,7 @@ end
 local timer    = require("hs.timer")
 local settings = require("hs.settings")
 local log      = require("hs.logger").new(USERDATA_TAG, "debug")
+local json     = require("hs.json")
 
 -- private variables and methods -----------------------------------------
 
@@ -222,17 +223,22 @@ end)
 
 module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
     if msgID == 100 then      -- registering a new instance
-        log.df("registering %s", msg)
-        module.__registeredCLIInstances[msg] = {
-            remote = module.remotePort(msg),
+        local instanceID, arguments = msg:match("^([%w-]+):(.*)$")
+        if not instanceID then instanceID, arguments = msg, nil end
+        if arguments then arguments = json.decode(arguments) end
+        log.df("registering %s", instanceID)
+
+        module.__registeredCLIInstances[instanceID] = {
+            remote = module.remotePort(instanceID),
             print  = function(...)
                 local things = table.pack(...)
                 local stdout = (things.n > 0) and tostring(things[1]) or ""
                 for i = 2, things.n do
                     stdout = stdout .. "\t" .. tostring(things[i])
                 end
-                module.__registeredCLIInstances[msg].remote:sendMessage(stdout, 0, false)
+                module.__registeredCLIInstances[instanceID].remote:sendMessage(stdout, 0, false)
             end,
+            arguments = arguments,
         }
     elseif msgID == 200 then  -- unregistering an instance
         log.df("unregistering %s", msg)
@@ -243,8 +249,9 @@ module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
 --        print(msg, instanceID, code)
         if instanceID then
             local fnEnv = setmetatable({
-                print         = module.__registeredCLIInstances[instanceID].print,
+                print       = module.__registeredCLIInstances[instanceID].print,
                 _instanceID = instanceID,
+                _args       = module.__registeredCLIInstances[instanceID].arguments,
             }, { __index = _G })
 
             local fn, err = load("return " .. code, "chunk", "bt", fnEnv)

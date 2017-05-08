@@ -22,7 +22,7 @@
 @property NSString         *colorOutput ;
 @property NSString         *colorError ;
 @property NSString         *colorReset ;
-
+@property NSArray          *arguments ;
 
 @property BOOL             useColors ;
 
@@ -73,6 +73,7 @@ static const char *portError(SInt32 code) {
 
         _useColors   = inColor ;
         [self updateColorStrings] ;
+        _arguments   = nil ;
         _sendTimeout = 2.0 ;
         _recvTimeout = 2.0 ;
         _exitCode   = EX_TEMPFAIL ; // until the thread is actually ready
@@ -168,7 +169,8 @@ static const char *portError(SInt32 code) {
     if (msgid < MSGID_REGISTER) {
         // prepend our UUID so the receiving callback knows which instance to communicate with
         UInt8 j= 0x00;
-        [dataToSend appendData:[_localName dataUsingEncoding:NSUTF8StringEncoding]] ;
+        NSData *prefix = [_localName dataUsingEncoding:NSUTF8StringEncoding] ;
+        [dataToSend appendData:prefix] ;
         [dataToSend appendData:[NSData dataWithBytes:&j length:1]] ;
     }
     if (data) {
@@ -205,8 +207,20 @@ static const char *portError(SInt32 code) {
 
 - (BOOL)registerWithRemote {
     if (_localPort) { // not needed for legacy mode
+        NSString *registration = _localName ;
+        if (_arguments) {
+            NSError* error;
+            NSData* data = [NSJSONSerialization dataWithJSONObject:_arguments options:(NSJSONWritingOptions)0 error:&error];
+            if (!error && data) {
+                NSString* str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+                registration = [NSString stringWithFormat:@"%@:%@", _localName, str] ;
+            } else {
+                fprintf(stderr, "unable to serialize arguments for registration: %s\n", error.localizedDescription.UTF8String);
+            }
+        }
+
         NSError *error = nil ;
-        [self sendToRemote:_localName msgID:MSGID_REGISTER wantResponse:NO error:&error] ;
+        [self sendToRemote:registration msgID:MSGID_REGISTER wantResponse:NO error:&error] ;
         if (error) {
             fprintf(stderr, "error registering CLI instance with Hammerspoon: %s\n", portError((SInt32)error.code));
             return NO ;
@@ -296,6 +310,8 @@ int main()
             } else if ([args[idx] isEqualToString:@"-h"] || [args[idx] isEqualToString:@"-?"]) {
                 printUsage(args[0].UTF8String) ;
                 exit(EX_OK) ;
+            } else if ([args[idx] isEqualToString:@"--"]) {
+                break ; // remaining arguments are to be passed in as is
             } else {
                 errorMsg = @"illegal option" ;
             }
@@ -326,6 +342,7 @@ int main()
         // may split them up later...
         core.sendTimeout = timeout ;
         core.recvTimeout = timeout ;
+        core.arguments   = args ;
 
 #ifdef DEBUG
         fprintf(stderr, "DEBUG\tCLI local port %s\n", core.localName.UTF8String) ;
