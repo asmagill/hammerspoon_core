@@ -164,11 +164,13 @@ static const char *portError(SInt32 code) {
 }
 
 - (NSData *)sendToRemote:(id)data msgID:(SInt32)msgid wantResponse:(BOOL)wantResponse error:(NSError * __autoreleasing *)error {
-    // prepend our UUID so the receiving callback knows which instance to communicate with
-    NSMutableData *dataToSend = (msgid < MSGID_REGISTER) ?
-                                [[[NSString stringWithFormat:@"%@:",_localName] dataUsingEncoding:NSUTF8StringEncoding] mutableCopy] :
-                                [NSMutableData data] ;
-
+    NSMutableData *dataToSend = [NSMutableData data] ;
+    if (msgid < MSGID_REGISTER) {
+        // prepend our UUID so the receiving callback knows which instance to communicate with
+        UInt8 j= 0x00;
+        [dataToSend appendData:[_localName dataUsingEncoding:NSUTF8StringEncoding]] ;
+        [dataToSend appendData:[NSData dataWithBytes:&j length:1]] ;
+    }
     if (data) {
         NSData *actualMessage = [data isKindOfClass:[NSData class]] ? data : [[data description] dataUsingEncoding:NSUTF8StringEncoding] ;
         if (actualMessage) [dataToSend appendData:actualMessage] ;
@@ -352,7 +354,9 @@ int main()
             if (!CFMessagePortIsValid(core.remotePort)) {
                 fprintf(stderr, "Message port has become invalid.  Attempting to re-establish.\n");
                 core.remotePort = CFMessagePortCreateRemote(kCFAllocatorDefault, (__bridge CFStringRef)portName) ;
-                if (!core.remotePort) {
+                if (core.remotePort) {
+                    [core registerWithRemote] ;
+                } else {
                     fprintf(stderr, "error: can't access Hammerspoon; is it running?\n");
                     core.exitCode = EX_UNAVAILABLE ;
                 }

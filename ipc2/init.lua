@@ -239,13 +239,13 @@ module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
         module.__registeredCLIInstances[msg].remote:delete()
         module.__registeredCLIInstances[msg].remote = nil
     else
-        local instanceID, code = msg:match("^([^:]*):(.*)$")
+        local instanceID, code = msg:match("^([%w-]*)\0(.*)$")
 --        print(msg, instanceID, code)
         if instanceID then
             local fnEnv = setmetatable({
                 print         = module.__registeredCLIInstances[instanceID].print,
                 _instanceID = instanceID,
-            }, { index = _G })
+            }, { __index = _G })
 
             local fn, err = load("return " .. code, "chunk", "bt", fnEnv)
             if not fn then fn, err = load(code, "chunk", "bt", fnEnv) end
