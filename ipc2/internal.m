@@ -13,6 +13,7 @@ static int refTable = LUA_NOREF;
 @interface HSIPCMessagePort : NSObject
 @property CFMessagePortRef   messagePort ;
 @property int                callbackRef ;
+@property int                selfRef ;
 @end
 
 static CFDataRef ipc2_callback(__unused CFMessagePortRef local, SInt32 msgid, CFDataRef data, void *info) {
@@ -32,6 +33,9 @@ static CFDataRef ipc2_callback(__unused CFMessagePortRef local, SInt32 msgid, CF
         NSData *flag = status ? [@"+" dataUsingEncoding:NSUTF8StringEncoding] : [@"-" dataUsingEncoding:NSUTF8StringEncoding] ;
         NSMutableData *result = [[NSMutableData alloc] initWithData:flag] ;
         [result appendData:[skin toNSObjectAtIndex:-1 withOptions:LS_NSLuaStringAsDataOnly]] ;
+        if (!status) {
+            [skin logError:[NSString stringWithFormat:@"%s:callback - error during callback for %@: %s", USERDATA_TAG, (__bridge NSString *)CFMessagePortGetName(port.messagePort), lua_tostring(L, -2)]] ;
+        }
         lua_pop(L, 2) ;                                 // remove the result and the tostring version
 
         if (result) outdata = (__bridge_retained CFDataRef)result ;
@@ -46,6 +50,7 @@ static CFDataRef ipc2_callback(__unused CFMessagePortRef local, SInt32 msgid, CF
 - (instancetype)init {
     self = [super init] ;
     if (self) {
+        _selfRef     = 0 ;
         _messagePort = NULL ;
         _callbackRef = LUA_NOREF ;
     }
@@ -191,39 +196,58 @@ static int ipc2_isValid(lua_State *L) {
     return 1 ;
 }
 
-/// hs.ipc2:sendMessage(data, msgID, [waitTimeout]) -> status, response
+/// hs.ipc2:sendMessage(data, msgID, [waitTimeout], [oneWay]) -> status, response
 /// Method
 /// Sends a message from a remote port to a local port
 ///
 /// Parameters:
-///  * data  - any data type which is to be sent to the local port.  The data will be converted into its string representation
-///  * msgID - an integer message ID
+///  * data        - any data type which is to be sent to the local port.  The data will be converted into its string representation
+///  * msgID       - an integer message ID
 ///  * waitTimeout - an optional number, default 2.0, representing the number of seconds the method will wait to send the message and then wait for a response.  The method *may* block up to twice this number of seconds, though usually it will be shorter.
+///  * oneWay      -  an optional boolean, default false, indicating whether or not to wait for a response.  It this is true, the second returned argument will be nil.
 ///
 /// Returns:
 ///  * status   - a boolean indicathing whether or not the local port responded before the timeout (true) or if an error or timeout occurred waiting for the response (false)
 ///  * response - the response from the local port, usually a string, but may be nil if there was no response returned.  If status is false, will contain an error message describing the error.
 static int ipc2_sendMessage(lua_State *L) {
     LuaSkin *skin = [LuaSkin shared] ;
-    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TANY, LS_TNUMBER | LS_TINTEGER, LS_TNUMBER | LS_TOPTIONAL, LS_TBREAK] ;
-    HSIPCMessagePort *port = [skin toNSObjectAtIndex:1] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG,
+                    LS_TANY,
+                    LS_TNUMBER | LS_TINTEGER,
+                    LS_TNUMBER | LS_TBOOLEAN | LS_TOPTIONAL,
+                    LS_TBOOLEAN | LS_TOPTIONAL,
+                    LS_TBREAK] ;
 
-    if (!CFMessagePortIsRemote(port.messagePort)) {
-        return luaL_error(L, "not a remote port") ;
-    }
-    lua_Integer msgID = lua_tointeger(L, 3) ;
-    CFTimeInterval waitTimeout = (lua_gettop(L) == 4) ? lua_tonumber(L, 4) : 2.0 ;
+    HSIPCMessagePort *port = [skin toNSObjectAtIndex:1] ;
+    if (!CFMessagePortIsRemote(port.messagePort)) { return luaL_error(L, "not a remote port") ; }
+
     luaL_tolstring(L, 2, NULL) ; // make sure it's a string
     NSData *data = [skin toNSObjectAtIndex:-1 withOptions:LS_NSLuaStringAsDataOnly] ;
     lua_pop(L, 1) ;
 
+    lua_Integer msgID = lua_tointeger(L, 3) ;
+
+    CFTimeInterval waitTimeout = ((lua_gettop(L) >= 4) && lua_isnumber(L, 4)) ? lua_tonumber(L, 4) : 2.0 ;
+
+    BOOL oneWay = lua_isboolean(L, -1) ? (BOOL)lua_toboolean(L, -1) : NO ;
+
     CFDataRef returnedData;
-    SInt32 code = CFMessagePortSendRequest(port.messagePort, (SInt32)msgID, (__bridge CFDataRef)data, waitTimeout, waitTimeout, kCFRunLoopDefaultMode, &returnedData);
+    SInt32 code = CFMessagePortSendRequest(
+                                            port.messagePort,
+                                            (SInt32)msgID,
+                                            (__bridge CFDataRef)data,
+                                            waitTimeout,
+                                            (oneWay ? 0.0 : waitTimeout),
+                                            (oneWay ? NULL : kCFRunLoopDefaultMode),
+                                            &returnedData
+                                          );
     BOOL status = (code == kCFMessagePortSuccess) ;
 
     NSData *response ;
     if (status) {
-        response = returnedData ? (__bridge_transfer NSData *)returnedData : nil ;
+        if (!oneWay) {
+            response = returnedData ? (__bridge_transfer NSData *)returnedData : nil ;
+        }
     } else {
         NSString *errMsg = [NSString stringWithFormat:@"unrecognized error: %d", code] ;
         switch(code) {
@@ -249,6 +273,7 @@ static int ipc2_sendMessage(lua_State *L) {
 
 static int pushHSIPCMessagePort(lua_State *L, id obj) {
     HSIPCMessagePort *value = obj;
+    value.selfRef++ ;
     void** valuePtr = lua_newuserdata(L, sizeof(HSIPCMessagePort *));
     *valuePtr = (__bridge_retained void *)value;
     luaL_getmetatable(L, USERDATA_TAG);
@@ -304,16 +329,18 @@ static int userdata_eq(lua_State* L) {
 static int userdata_gc(lua_State* L) {
     HSIPCMessagePort *obj = get_objectFromUserdata(__bridge_transfer HSIPCMessagePort, L, 1, USERDATA_TAG) ;
     if (obj) {
-        LuaSkin *skin = [LuaSkin shared] ;
-        obj.callbackRef = [skin luaUnref:refTable ref:obj.callbackRef] ;
-        if (obj.messagePort) {
-            CFMessagePortInvalidate(obj.messagePort) ;
-            CFRelease(obj.messagePort) ;
-            obj.messagePort = NULL ;
+        obj.selfRef-- ;
+        if (obj.selfRef == 0) {
+            LuaSkin *skin = [LuaSkin shared] ;
+            obj.callbackRef = [skin luaUnref:refTable ref:obj.callbackRef] ;
+            if (obj.messagePort) {
+                CFMessagePortInvalidate(obj.messagePort) ;
+                CFRelease(obj.messagePort) ;
+                obj.messagePort = NULL ;
+            }
+            obj = nil ;
         }
     }
-    obj = nil ;
-
     // Remove the Metatable so future use of the variable in Lua won't think its valid
     lua_pushnil(L) ;
     lua_setmetatable(L, 1) ;

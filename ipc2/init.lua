@@ -17,38 +17,13 @@ if basePath then
     end
 end
 
+local timer    = require("hs.timer")
+local settings = require("hs.settings")
+local log      = require("hs.logger").new(USERDATA_TAG, "debug")
+
 -- private variables and methods -----------------------------------------
 
-local function rawhandler(str)
-    local fn, err = load("return " .. str)
-    if not fn then fn, err = load(str) end
-    if fn then return fn() else return err end
-end
-
 -- Public interface ------------------------------------------------------
-
---- hs.ipc2.handler(str) -> value
---- Function
---- Processes received IPC messages and returns the results
----
---- Parameters:
----  * str - A string containing some a message to process (typically, some Lua code)
----
---- Returns:
----  * A string containing the results of the IPC message
----
---- Notes:
----  * This is not a function you should typically call directly, rather, it is documented because you can override it with your own function if you have particular IPC needs.
----  * The return value of this function is always turned into a string via `lua_tostring()` and returned to the IPC client (typically the `hs` command line tool)
----  * The default handler is:
---- ~~~
----     function hs.ipc2.handler(str)
----         local fn, err = load("return " .. str)
----         if not fn then fn, err = load(str) end
----         if fn then return fn() else return err end
----     end
---- ~~~
-module.handler = rawhandler
 
 --- hs.ipc2.cliGetColors() -> table
 --- Function
@@ -64,7 +39,6 @@ module.handler = rawhandler
 ---   * output
 ---   * error
 module.cliGetColors = function()
-    local settings = require("hs.settings")
     local colors = {}
     colors.initial = settings.get("ipc2.cli.color_initial") or "\27[35m" ;
     colors.input   = settings.get("ipc2.cli.color_input")   or "\27[33m" ;
@@ -92,7 +66,6 @@ end
 ---  * Lua doesn't support octal escapes in it's strings, so use `\x1b` or `\27` to indicate the `escape` character e.g. `ipc2.cliSetColors{ initial = "", input = "\27[33m", output = "\27[38;5;11m" }`
 ---  * The values are stored by the `hs.settings` extension, so will persist across restarts of Hammerspoon
 module.cliSetColors = function(colors)
-    local settings = require("hs.settings")
     if colors.initial then settings.set("ipc2.cli.color_initial", colors.initial) end
     if colors.input   then settings.set("ipc2.cli.color_input",   colors.input)   end
     if colors.output  then settings.set("ipc2.cli.color_output",  colors.output)  end
@@ -110,7 +83,6 @@ end
 --- Returns:
 ---  * None
 module.cliResetColors = function()
-    local settings = require("hs.settings")
     settings.clear("ipc2.cli.color_initial")
     settings.clear("ipc2.cli.color_input")
     settings.clear("ipc2.cli.color_output")
@@ -234,31 +206,61 @@ module.cliUninstall = function(path, silent)
     return not module.cliStatus(path, silent)
 end
 
-module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
-    local raw = (msgID == -1)
-    local originalprint = print
-    local fakestdout = ""
-    print = function(...)
-        originalprint(...)
-        local things = table.pack(...)
-        fakestdout = fakestdout .. tostring(things[1])
-        for i = 2, things.n do
-            fakestdout = fakestdout .. "\t" .. tostring(things[i])
+module.__registeredCLIInstances = {}
+-- cleanup in case someone goes away without saying goodbye
+module.__registeredInstanceCleanup = timer.doEvery(60, function()
+    for k, v in pairs(module.__registeredCLIInstances) do
+        if v.remote and not v.remote:isValid() then
+            log.df("pruning %s; message port is no longer valid", k)
+            v.remote:delete()
+            module.__registeredCLIInstances[k] = nil
+        elseif not v.remote then
+            module.__registeredCLIInstances[k] = nil
         end
-        fakestdout = fakestdout .. "\n"
     end
+end)
 
-    local fn = raw and rawhandler or module.handler
-    local results = table.pack(pcall(function() return fn(msg) end))
+module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
+    if msgID == 100 then      -- registering a new instance
+        log.df("registering %s", msg)
+        module.__registeredCLIInstances[msg] = {
+            remote = module.remotePort(msg),
+            print  = function(...)
+                local things = table.pack(...)
+                local stdout = (things.n > 0) and tostring(things[1]) or ""
+                for i = 2, things.n do
+                    stdout = stdout .. "\t" .. tostring(things[i])
+                end
+                module.__registeredCLIInstances[msg].remote:sendMessage(stdout, 0, false)
+            end,
+        }
+    elseif msgID == 200 then  -- unregistering an instance
+        log.df("unregistering %s", msg)
+        module.__registeredCLIInstances[msg].remote:delete()
+        module.__registeredCLIInstances[msg].remote = nil
+    else
+        local instanceID, code = msg:match("^([^:]*):(.*)$")
+--        print(msg, instanceID, code)
+        if instanceID then
+            local fnEnv = setmetatable({
+                print         = module.__registeredCLIInstances[instanceID].print,
+                _instanceID = instanceID,
+            }, { index = _G })
 
-    local str = ""
-    for i = 2, results.n do
-        if i > 2 then str = str .. "\t" end
-        str = str .. tostring(results[i])
+            local fn, err = load("return " .. code, "chunk", "bt", fnEnv)
+            if not fn then fn, err = load(code, "chunk", "bt", fnEnv) end
+            local results = fn and table.pack(pcall(fn)) or { false, err }
+
+            local str = (results.n > 1) and tostring(results[2]) or ""
+            for i = 3, results.n do
+                str = str .. "\t" .. tostring(results[i])
+            end
+            module.__registeredCLIInstances[instanceID].remote:sendMessage(str, results[1] and 0 or -1, false)
+        else
+            log.ef("unexpected message received: %s", msg)
+        end
+        return nil
     end
-
-    print = originalprint
-    return "ipc2 --> " .. fakestdout .. str
 end)
 
 -- Return Module Object --------------------------------------------------

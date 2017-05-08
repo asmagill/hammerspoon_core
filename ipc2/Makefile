@@ -74,7 +74,8 @@ install-lua: $(LUAFILE)
 	install -m 0644 $(LUAFILE) $(PREFIX)/$(MODPATH)/$(MODULE)
 
 docs:
-	hs -c "require(\"hs.doc\").builder.genJSON(\"$(dir $(mkfile_path))\")" > docs.json
+# 	hs -c "require(\"hs.doc\").builder.genJSON(\"$(dir $(mkfile_path))\")" > docs.json
+	hs -c "require(\"hs.doc\").builder.genJSON(require(\"hs.doc\").builder.genComments(\"$(dir $(mkfile_path))\", true))" > docs.json
 
 markdown:
 	hs -c "dofile(\"$(MARKDOWNMAKER)\").genMarkdown([[$(dir $(mkfile_path))]])" > README.tmp.md
