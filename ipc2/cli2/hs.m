@@ -1,12 +1,28 @@
+// TODO:
+//   set console mode from cmd line and include in registration
+//       or find other way to persist setting via cli through re-connect
+//   allow arbitrary binary from stdin (i.e. don't choke on null in string
+//   allow read from file via -f
+//   support #! /path/to/hs (if last arg is a file, assume -f?) is there another way to tell?
+//      when invoked this way, should args only include those after filename?
+//      are args after filename parsed by hs or ignored (implicit --)? separate args array?
+//   Document (man page, printUsage, HS docs)
+//   Decide on legacy mode support... and legacy auto-detection?
+
 @import Foundation ;
 @import CoreFoundation ;
 @import Darwin.sysexits ;
 #include <editline/readline.h>
 
-#define DEBUG
+// #define DEBUG
 
 #define MSGID_REGISTER   100
 #define MSGID_UNREGISTER 200
+
+#define MSGID_ERROR   -1
+#define MSGID_OUTPUT   0
+#define MSGID_RETURN   1
+#define MSGID_CONSOLE  2
 
 @interface HSClient : NSThread
 @property CFMessagePortRef localPort ;
@@ -38,11 +54,23 @@ static CFDataRef localPortCallback(__unused CFMessagePortRef local, SInt32 msgid
     CFDataGetBytes(data, CFRangeMake(0, maxSize), (UInt8 *)responseCString );
 
     BOOL isStdOut = (msgid < 0) ? NO : YES ;
-
-    fprintf((isStdOut ? stdout : stderr), "%s", (isStdOut ? self.colorOutput.UTF8String : self.colorError.UTF8String)) ;
+    NSString *outputColor ;
+    switch(msgid) {
+        case MSGID_OUTPUT:
+        case MSGID_RETURN:  outputColor = self.colorOutput ; break ;
+        case MSGID_CONSOLE: outputColor = self.colorBanner ; break ;
+        case MSGID_ERROR:
+        default:            outputColor = self.colorError ;
+    }
+    fprintf((isStdOut ? stdout : stderr), "%s", outputColor.UTF8String) ;
     fwrite(responseCString, 1, (size_t)maxSize, (isStdOut ? stdout : stderr));
     fprintf((isStdOut ? stdout : stderr), "%s", self.colorReset.UTF8String) ;
     fprintf((isStdOut ? stdout : stderr), "\n") ;
+
+    // if the main thread is stuck waiting for readline to complete, the active display color
+    // should be the input color; any other output will set it's color before showing text, so
+    // this would end up being a noop
+    if (msgid == MSGID_CONSOLE) printf("%s", self.colorInput.UTF8String) ;
 
     free(responseCString) ;
 
@@ -74,11 +102,16 @@ static const char *portError(SInt32 code) {
         _useColors   = inColor ;
         [self updateColorStrings] ;
         _arguments   = nil ;
-        _sendTimeout = 2.0 ;
-        _recvTimeout = 2.0 ;
+        _sendTimeout = 4.0 ;
+        _recvTimeout = 4.0 ;
         _exitCode   = EX_TEMPFAIL ; // until the thread is actually ready
     }
     return self ;
+}
+
+- (void)dealloc {
+    if (_localPort)  CFRelease(_localPort) ;
+    if (_remotePort) CFRelease(_remotePort) ;
 }
 
 - (void)main {
@@ -87,6 +120,7 @@ static const char *portError(SInt32 code) {
         if (!_remotePort) {
             fprintf(stderr, "error: can't access Hammerspoon message port %s; is it running with the ipc2 module loaded?\n", _remoteName.UTF8String);
             _exitCode = EX_UNAVAILABLE ;
+            [self cancel] ;
             return ;
         }
 
@@ -97,13 +131,14 @@ static const char *portError(SInt32 code) {
 
             if (error) {
                 NSString *errorMsg = _localPort ? [NSString stringWithFormat:@"%@ port name already in use", _localName] : @"failed to create new local port" ;
-                // pedantic, I know, but proper cleanup... maybe it will become a habit eventually
-                if (_localPort)  CFRelease(_localPort) ;
-                if (_remotePort) CFRelease(_remotePort) ;
-                _localPort  = NULL ;
-                _remotePort = NULL ;
+//                 // pedantic, I know, but proper cleanup... maybe it will become a habit eventually
+//                 if (_localPort)  CFRelease(_localPort) ;
+//                 if (_remotePort) CFRelease(_remotePort) ;
+//                 _localPort  = NULL ;
+//                 _remotePort = NULL ;
                 fprintf(stderr, "error: %s\n", errorMsg.UTF8String);
                 _exitCode = EX_UNAVAILABLE ;
+                [self cancel] ;
                 return ;
             }
 
@@ -112,12 +147,13 @@ static const char *portError(SInt32 code) {
                 CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoop, kCFRunLoopCommonModes);
                 CFRelease(runLoop) ;
             } else {
-                if (_localPort)  CFRelease(_localPort) ;
-                if (_remotePort) CFRelease(_remotePort) ;
-                _localPort  = NULL ;
-                _remotePort = NULL ;
+//                 if (_localPort)  CFRelease(_localPort) ;
+//                 if (_remotePort) CFRelease(_remotePort) ;
+//                 _localPort  = NULL ;
+//                 _remotePort = NULL ;
                 fprintf(stderr, "unable to create runloop source for local port\n");
                 _exitCode = EX_UNAVAILABLE ;
+                [self cancel] ;
                 return ;
             }
         }
@@ -134,6 +170,7 @@ static const char *portError(SInt32 code) {
             }
         } else {
             _exitCode = EX_UNAVAILABLE ;
+            [self cancel] ;
             return ;
         }
         [self unregisterWithRemote] ;
@@ -241,6 +278,19 @@ static const char *portError(SInt32 code) {
     return YES ;
 }
 
+- (BOOL)executeCommand:(NSString *)command {
+    NSError *error ;
+    NSData *response = [self sendToRemote:command msgID:0 wantResponse:YES error:&error];
+    if (error) {
+        fprintf(stderr, "error communicating with Hammerspoon: %s\n", portError((SInt32)error.code));
+        _exitCode = EX_UNAVAILABLE ;
+        return NO ;
+    } else {
+        NSString *answer = [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding] ;
+        return [answer isEqualToString:@"+ok"] ;
+    }
+}
+
 @end
 
 static void printUsage(const char *cmd) {
@@ -255,14 +305,12 @@ int main()
 
         BOOL           readStdIn   = (BOOL)!isatty(fileno(stdin)) ;
         BOOL           interactive = !readStdIn ;
-        BOOL           useColors   = (BOOL)isatty(fileno(stdout)) ;
+        BOOL           useColors   = interactive && (BOOL)isatty(fileno(stdout)) ;
         BOOL           legacyMode  = NO ;
         NSString       *portName   = @"hsCommandLine" ;
-        CFTimeInterval timeout     = 2.0 ;
+        CFTimeInterval timeout     = 4.0 ;
 
         NSMutableArray<NSString *> *preRun     = nil ;
-
-        BOOL           hasSeenI = NO, hasSeenS = NO ;
 
         NSArray<NSString *> *args = [[NSProcessInfo processInfo] arguments] ;
         NSUInteger idx   = 1 ; // skip command name
@@ -271,13 +319,12 @@ int main()
             NSString *errorMsg = nil ;
 
             if ([args[idx] isEqualToString:@"-i"]) {
-                if (!hasSeenS) readStdIn = NO ; // ignore default switch if it's already been explicitly seen
+                readStdIn   = NO ;
                 interactive = YES ;
-                hasSeenI = YES ;
             } else if ([args[idx] isEqualToString:@"-s"]) {
-                if (!hasSeenI) interactive = NO ; // ignore default switch if it's already been explicitly seen
-                readStdIn = YES ;
-                hasSeenS = YES ;
+                interactive = NO ;
+                useColors   = NO ;
+                readStdIn   = YES ;
             } else if ([args[idx] isEqualToString:@"-n"]) {
                 useColors = NO ;
             } else if ([args[idx] isEqualToString:@"-N"]) {
@@ -296,10 +343,11 @@ int main()
                 if ((idx + 1) < args.count) {
                     idx++ ;
                     preRun[preRun.count] = args[idx] ;
+                    useColors   = NO ;
+                    interactive = NO ;
                 } else {
                     errorMsg = @"option requires an argument" ;
                 }
-                if (!hasSeenI) interactive = NO ; // ignore default switch if it's already been explicitly seen
             } else if ([args[idx] isEqualToString:@"-t"]) {
                 if ((idx + 1) < args.count) {
                     idx++ ;
@@ -317,7 +365,7 @@ int main()
             }
 
             if (errorMsg) {
-                fprintf(stderr, "%s: %s -- %s\n", args[0].UTF8String, errorMsg.UTF8String, [args[idx] substringFromIndex:1].UTF8String) ;
+                fprintf(stderr, "%s: %s: %s\n", args[0].UTF8String, errorMsg.UTF8String, [args[idx] substringFromIndex:1].UTF8String) ;
                 exit(EX_USAGE) ;
             }
             idx++ ;
@@ -351,45 +399,78 @@ int main()
         [core start] ;
 
 #ifdef DEBUG
-        printf("Waiting for background thread to start\n") ;
+        printf("DEBUG\tWaiting for background thread to start\n") ;
 #endif
         while (core.exitCode == EX_TEMPFAIL) ;
 
-        while (core.exitCode == EX_OK) {
-            printf("\n%s", core.colorInput.UTF8String);
-            char* input = readline("> ");
-            printf("%s", core.colorReset.UTF8String);
-            if (!input) { // ctrl-d or other issue with readline
-                printf("\n") ;
-                [core cancel] ;
-                [core performSelector:@selector(poke:) onThread:core withObject:nil waitUntilDone:YES] ;
-                break ;
-            }
-
-            add_history(input);
-
-            if (!CFMessagePortIsValid(core.remotePort)) {
-                fprintf(stderr, "Message port has become invalid.  Attempting to re-establish.\n");
-                core.remotePort = CFMessagePortCreateRemote(kCFAllocatorDefault, (__bridge CFStringRef)portName) ;
-                if (core.remotePort) {
-                    [core registerWithRemote] ;
-                } else {
-                    fprintf(stderr, "error: can't access Hammerspoon; is it running?\n");
-                    core.exitCode = EX_UNAVAILABLE ;
+        if (core.exitCode == EX_OK && preRun) {
+            for (NSString *command in preRun) {
+                BOOL status = [core executeCommand:command] ;
+                if (!status) {
+                    if (core.exitCode == EX_OK) core.exitCode = EX_DATAERR ;
+                    break ;
                 }
             }
-            if (core.exitCode == EX_OK) {
-                NSError *error ;
-                [core sendToRemote:[NSString stringWithFormat:@"%s", input] msgID:0 wantResponse:YES error:&error];
-                if (error) {
-                    fprintf(stderr, "error communicating with Hammerspoon: %s\n", portError((SInt32)error.code));
-                    core.exitCode = EX_UNAVAILABLE ;
-                }
+        }
+
+        if (core.exitCode == EX_OK && readStdIn) {
+            NSMutableString *command = [[NSMutableString alloc] init] ;
+            char buffer[BUFSIZ];
+            while (fgets(buffer, BUFSIZ, stdin)) {
+                NSString *cmd = [NSString stringWithCString:buffer encoding:NSUTF8StringEncoding] ;
+                [command appendString:cmd] ;
             }
 
-            if (input) free(input) ;
+            if (ferror(stdin)) {
+                perror("error reading from stdin:");
+                core.exitCode = EX_NOINPUT ;
+            } else {
+                BOOL status = [core executeCommand:command] ;
+                if (!status) {
+                    if (core.exitCode == EX_OK) core.exitCode = EX_DATAERR ;
+                }
+            }
+        }
+
+        if (core.exitCode == EX_OK && interactive) {
+            printf("%sHammerspoon interactive prompt.%s\n", core.colorBanner.UTF8String, core.colorReset.UTF8String);
+            while (core.exitCode == EX_OK) {
+                printf("\n%s", core.colorInput.UTF8String);
+                char* input = readline("> ");
+                printf("%s", core.colorReset.UTF8String);
+                if (!input) { // ctrl-d or other issue with readline
+                    printf("\n") ;
+                    break ;
+                }
+
+                add_history(input);
+
+                if (!CFMessagePortIsValid(core.remotePort)) {
+                    fprintf(stderr, "Message port has become invalid.  Attempting to re-establish.\n");
+                    CFMessagePortRef newPort = CFMessagePortCreateRemote(kCFAllocatorDefault, (__bridge CFStringRef)portName) ;
+                    if (newPort) {
+                        CFRelease(core.remotePort) ;
+                        core.remotePort = newPort ;
+                        [core registerWithRemote] ;
+                    } else {
+                        fprintf(stderr, "error: can't access Hammerspoon; is it running?\n");
+                        core.exitCode = EX_UNAVAILABLE ;
+                    }
+                }
+
+                if (core.exitCode == EX_OK) [core executeCommand:[NSString stringWithCString:input encoding:NSUTF8StringEncoding]] ;
+
+                if (input) free(input) ;
+            }
+        }
+
+        if (core.remotePort && !core.cancelled) {
+            [core cancel] ;
+            // cancel does not break the runloop, so poke it to wake it up
+            [core performSelector:@selector(poke:) onThread:core withObject:nil waitUntilDone:YES] ;
         }
         exitCode = core.exitCode ;
+        core = nil ;
     } ;
     return(exitCode);
 }

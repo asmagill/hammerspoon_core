@@ -30,6 +30,7 @@ static CFDataRef ipc2_callback(__unused CFMessagePortRef local, SInt32 msgid, CF
         BOOL status = [skin protectedCallAndTraceback:3 nresults:1] ;
 
         luaL_tolstring(L, -1, NULL) ;                   // make sure it's a string
+        [skin logDebug:[NSString stringWithFormat:@"%s", lua_tostring(L, -1)]] ;
         NSData *flag = status ? [@"+" dataUsingEncoding:NSUTF8StringEncoding] : [@"-" dataUsingEncoding:NSUTF8StringEncoding] ;
         NSMutableData *result = [[NSMutableData alloc] initWithData:flag] ;
         [result appendData:[skin toNSObjectAtIndex:-1 withOptions:LS_NSLuaStringAsDataOnly]] ;

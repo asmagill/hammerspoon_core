@@ -24,6 +24,33 @@ local json     = require("hs.json")
 
 -- private variables and methods -----------------------------------------
 
+local MSG_ID = {
+    REGISTER   = 100,
+    UNREGISTER = 200,
+    ERROR      = -1,
+    OUTPUT     =  0,
+    RETURN     =  1,
+    CONSOLE    =  2,
+}
+
+local originalPrint = print
+local printReplacement = function(...)
+    originalPrint(...)
+    for k,v in pairs(module.__registeredCLIInstances) do
+        if v._cli.console and v.print then
+--            v.print(...)
+-- make it more obvious what is console output versus the command line's
+            local things = table.pack(...)
+            local stdout = (things.n > 0) and tostring(things[1]) or ""
+            for i = 2, things.n do
+                stdout = stdout .. "\t" .. tostring(things[i])
+            end
+            v._cli.remote:sendMessage(stdout, MSG_ID.CONSOLE)
+        end
+    end
+end
+print = printReplacement
+
 -- Public interface ------------------------------------------------------
 
 --- hs.ipc2.cliGetColors() -> table
@@ -211,62 +238,70 @@ module.__registeredCLIInstances = {}
 -- cleanup in case someone goes away without saying goodbye
 module.__registeredInstanceCleanup = timer.doEvery(60, function()
     for k, v in pairs(module.__registeredCLIInstances) do
-        if v.remote and not v.remote:isValid() then
+        if v._cli.remote and not v._cli.remote:isValid() then
             log.df("pruning %s; message port is no longer valid", k)
-            v.remote:delete()
+            v._cli.remote:delete()
             module.__registeredCLIInstances[k] = nil
-        elseif not v.remote then
+        elseif not v._cli.remote then
             module.__registeredCLIInstances[k] = nil
         end
     end
 end)
 
+
 module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
-    if msgID == 100 then      -- registering a new instance
+    if msgID == MSG_ID.REGISTER then      -- registering a new instance
         local instanceID, arguments = msg:match("^([%w-]+):(.*)$")
         if not instanceID then instanceID, arguments = msg, nil end
         if arguments then arguments = json.decode(arguments) end
         log.df("registering %s", instanceID)
 
-        module.__registeredCLIInstances[instanceID] = {
-            remote = module.remotePort(instanceID),
+        module.__registeredCLIInstances[instanceID] = setmetatable({
+            _cli = {
+                remote  = module.remotePort(instanceID),
+                console = false,
+                args    = arguments,
+            },
             print  = function(...)
                 local things = table.pack(...)
                 local stdout = (things.n > 0) and tostring(things[1]) or ""
                 for i = 2, things.n do
                     stdout = stdout .. "\t" .. tostring(things[i])
                 end
-                module.__registeredCLIInstances[instanceID].remote:sendMessage(stdout, 0, false)
+                module.__registeredCLIInstances[instanceID]._cli.remote:sendMessage(stdout, MSG_ID.OUTPUT)
+                if type(module.__registeredCLIInstances[instanceID]._cli.console) == "nil" then
+                    originalPrint(...)
+                end
             end,
-            arguments = arguments,
-        }
-    elseif msgID == 200 then  -- unregistering an instance
+        }, {
+            __index    = _G,
+            __newindex = function(self, key, value)
+                _G[key] = value
+            end,
+        })
+    elseif msgID == MSG_ID.UNREGISTER then  -- unregistering an instance
         log.df("unregistering %s", msg)
-        module.__registeredCLIInstances[msg].remote:delete()
-        module.__registeredCLIInstances[msg].remote = nil
+        module.__registeredCLIInstances[msg]._cli.remote:delete()
+        module.__registeredCLIInstances[msg] = nil
     else
         local instanceID, code = msg:match("^([%w-]*)\0(.*)$")
 --        print(msg, instanceID, code)
         if instanceID then
-            local fnEnv = setmetatable({
-                print       = module.__registeredCLIInstances[instanceID].print,
-                _instanceID = instanceID,
-                _args       = module.__registeredCLIInstances[instanceID].arguments,
-            }, { __index = _G })
-
+            local fnEnv = module.__registeredCLIInstances[instanceID]
             local fn, err = load("return " .. code, "chunk", "bt", fnEnv)
             if not fn then fn, err = load(code, "chunk", "bt", fnEnv) end
-            local results = fn and table.pack(pcall(fn)) or { false, err }
+            local results = fn and table.pack(pcall(fn)) or { false, err, n = 2 }
 
             local str = (results.n > 1) and tostring(results[2]) or ""
             for i = 3, results.n do
                 str = str .. "\t" .. tostring(results[i])
             end
-            module.__registeredCLIInstances[instanceID].remote:sendMessage(str, results[1] and 0 or -1, false)
+
+            fnEnv._cli.remote:sendMessage(str, results[1] and MSG_ID.RETURN or MSG_ID.ERROR)
+            return results[1] and "ok" or "error"
         else
             log.ef("unexpected message received: %s", msg)
         end
-        return nil
     end
 end)
 
