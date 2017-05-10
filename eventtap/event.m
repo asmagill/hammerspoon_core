@@ -33,13 +33,168 @@ static int eventtap_event_copy(lua_State* L) {
     return 1;
 }
 
-// static int eventtap_event_create(lua_State* L) {
-//     CGEventRef copy = CGEventCreate(eventSource);
-//     new_eventtap_event(L, copy);
-//     CFRelease(copy);
-//
-//     return 1;
-// }
+/// hs.eventtap.event.newEvent() -> event
+/// Constructor
+/// Creates a blank event.  You will need to set its type with [hs.eventtap.event:setType](#setType)
+///
+/// Parameters:
+///  * None
+///
+/// Returns:
+///  * a new `hs.eventtap.event` object
+///
+/// Notes:
+///  * this is an empty event that you should set a type for and whatever other properties may be appropriate before posting.
+static int eventtap_event_newEvent(lua_State* L) {
+    CGEventRef event = CGEventCreate(eventSource);
+    new_eventtap_event(L, event);
+    CFRelease(event);
+    return 1;
+}
+
+/// hs.eventtap.event.newEventFromData(data) -> event
+/// Constructor
+/// Creates an event from the data encoded in the string provided.
+///
+/// Parameters:
+///  * data - a string containing binary data provided by [hs.eventtap.event:asData](#asData) representing an event.
+///
+/// Returns:
+///  * a new `hs.eventtap.event` object or nil if the string did not represent a valid event
+static int eventtap_event_newEventFromData(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TSTRING, LS_TBREAK] ;
+    NSData *data = [skin toNSObjectAtIndex:1 withOptions:LS_NSLuaStringAsDataOnly] ;
+
+    CGEventRef event = CGEventCreateFromData(NULL, (__bridge CFDataRef)data);
+    if (event) {
+        new_eventtap_event(L, event);
+        CFRelease(event);
+    } else {
+        lua_pushnil(L) ;
+    }
+    return 1;
+}
+
+/// hs.eventtap.event:asData() -> string
+/// Method
+/// Returns a string containing binary data representing the event.  This can be used to record events for later use.
+///
+/// Parameters:
+///  * None
+///
+/// Returns:
+///  * a string representing the event or nil if the event cannot be represented as a string
+///
+/// Notes:
+///  * You can recreate the event for later posting with [hs.eventtap.event.newnEventFromData](#newEventFromData)
+static int eventtap_event_asData(lua_State* L) {
+    CGEventRef event = *(CGEventRef*)luaL_checkudata(L, 1, EVENT_USERDATA_TAG);
+    CFDataRef data = CGEventCreateData(NULL, event) ;
+    if (data) {
+        [[LuaSkin shared] pushNSObject:(__bridge_transfer NSData *)data] ;
+    } else {
+        lua_pushnil(L) ;
+    }
+    return 1 ;
+}
+
+/// hs.eventtap.event:location([pointTable]) -> event | table
+/// Method
+/// Get or set the current mouse pointer location as defined for the event.
+///
+/// Parameters:
+///  * pointTable - an optional point table specifying the x and y coordinates of the mouse pointer location for the event
+///
+/// Returns:
+///  * if pointTable is provided, returns the `hs.eventtap.event` object; otherwise returns a point table containing x and y key-value pairs specifying the mouse pointer location as specified for this event.
+///
+/// Notes:
+///  * the use or effect of this method is undefined if the event is not a mouse type event.
+static int eventtap_event_location(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, EVENT_USERDATA_TAG, LS_TTABLE | LS_TOPTIONAL, LS_TBREAK] ;
+    CGEventRef event = *(CGEventRef*)luaL_checkudata(L, 1, EVENT_USERDATA_TAG);
+    if (lua_gettop(L) == 1) {
+        [skin pushNSPoint:NSPointFromCGPoint(CGEventGetLocation(event))] ;
+    } else {
+        NSPoint theLocation = [skin tableToPointAtIndex:2] ;
+        CGEventSetLocation(event, NSPointToCGPoint(theLocation)) ;
+        lua_pushvalue(L, 1) ;
+    }
+    return 1 ;
+}
+
+/// hs.eventtap.event:timestamp([absolutetime]) -> event | integer
+/// Method
+/// Get or set the timestamp of the event.
+///
+/// Parameters:
+///  * absolutetime - an optional integer specifying the timestamp for the event.
+///
+/// Returns:
+///  * if absolutetime is provided, returns the `hs.eventtap.event` object; otherwise returns the current timestamp for the event.
+///
+/// Notes:
+///  * Synthesized events have a timestamp of 0 by default.
+///  * The timestamp, if specified, is expressed as an integer representing the number of nanoseconds since the system was last booted.  See `hs.timer.absoluteTime`.
+///  * This field appears to be informational only and is not required when crafting your own events with this module.
+static int eventtap_event_timestamp(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, EVENT_USERDATA_TAG, LS_TNUMBER | LS_TINTEGER | LS_TOPTIONAL, LS_TBREAK] ;
+    CGEventRef event = *(CGEventRef*)luaL_checkudata(L, 1, EVENT_USERDATA_TAG);
+    if (lua_gettop(L) == 1) {
+        lua_pushinteger(L, (lua_Integer)CGEventGetTimestamp(event)) ;
+    } else {
+        CGEventSetTimestamp(event, (CGEventTimestamp)lua_tointeger(L, 2)) ;
+        lua_pushvalue(L, 1) ;
+    }
+    return 1 ;
+}
+
+/// hs.eventtap.event:setType(type) -> event
+/// Method
+/// Set the type for this event.
+///
+/// Parameters:
+///  * type - an integer matching one of the event types described in [hs.eventtap.event.types](#types)
+///
+/// Returns:
+///  * the `hs.eventtap.event` object
+static int eventtap_event_setType(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, EVENT_USERDATA_TAG, LS_TNUMBER | LS_TINTEGER, LS_TBREAK] ;
+    CGEventRef event = *(CGEventRef*)luaL_checkudata(L, 1, EVENT_USERDATA_TAG);
+    CGEventSetType(event, (CGEventType)lua_tointeger(L, 2)) ;
+    lua_pushvalue(L, 1) ;
+    return 1 ;
+}
+
+/// hs.eventtap.event:rawFlags([flags]) -> event | integer
+/// Method
+/// Experimental method to get or set the modifier flags for an event directly.
+///
+/// Parameters:
+///  * flags - an optional integer, made by logically combining values from [hs.eventtap.event.rawFlagMasks](#rawFlagMasks) specifying the modifier keys which should be set for this event
+///
+/// Returns:
+///  * if flags is provided, returns the `hs.eventtap.event` object; otherwise returns the current flags set as an integer
+///
+/// Notes:
+///  * This method is experimental and may undergo changes or even removal in the future
+///  * See [hs.eventtap.event.rawFlagMasks](#rawFlagMasks) for more information
+static int eventtap_event_rawFlags(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, EVENT_USERDATA_TAG, LS_TNUMBER | LS_TINTEGER | LS_TOPTIONAL, LS_TBREAK] ;
+    CGEventRef event = *(CGEventRef*)luaL_checkudata(L, 1, EVENT_USERDATA_TAG);
+    if (lua_gettop(L) == 1) {
+        lua_pushinteger(L, (lua_Integer)CGEventGetFlags(event)) ;
+    } else {
+        CGEventSetFlags(event, (CGEventFlags)lua_tointeger(L, 2)) ;
+        lua_pushvalue(L, 1) ;
+    }
+    return 1 ;
+}
 
 /// hs.eventtap.event:getFlags() -> table
 /// Method
@@ -82,7 +237,7 @@ static int eventtap_event_getFlags(lua_State* L) {
     return 1;
 }
 
-/// hs.eventtap.event:setFlags(table)
+/// hs.eventtap.event:setFlags(table) -> event
 /// Method
 /// Sets the keyboard modifiers of an event
 ///
@@ -804,41 +959,76 @@ static int eventtap_event_systemKey(lua_State* L) {
 static void pushtypestable(lua_State* L) {
     lua_newtable(L);
     lua_pushinteger(L, kCGEventLeftMouseDown);      lua_setfield(L, -2, "leftMouseDown");
+    lua_pushstring(L, "leftMouseDown") ;            lua_rawseti(L, -2, kCGEventLeftMouseDown);
     lua_pushinteger(L, kCGEventLeftMouseUp);        lua_setfield(L, -2, "leftMouseUp");
+    lua_pushstring(L, "leftMouseUp") ;              lua_rawseti(L, -2, kCGEventLeftMouseUp);
     lua_pushinteger(L, kCGEventLeftMouseDragged);   lua_setfield(L, -2, "leftMouseDragged");
+    lua_pushstring(L, "leftMouseDragged") ;         lua_rawseti(L, -2, kCGEventLeftMouseDragged);
     lua_pushinteger(L, kCGEventRightMouseDown);     lua_setfield(L, -2, "rightMouseDown");
+    lua_pushstring(L, "rightMouseDown") ;           lua_rawseti(L, -2, kCGEventRightMouseDown);
     lua_pushinteger(L, kCGEventRightMouseUp);       lua_setfield(L, -2, "rightMouseUp");
+    lua_pushstring(L, "rightMouseUp") ;             lua_rawseti(L, -2, kCGEventRightMouseUp);
     lua_pushinteger(L, kCGEventRightMouseDragged);  lua_setfield(L, -2, "rightMouseDragged");
+    lua_pushstring(L, "rightMouseDragged") ;        lua_rawseti(L, -2, kCGEventRightMouseDragged);
     lua_pushinteger(L, kCGEventOtherMouseDown);     lua_setfield(L, -2, "middleMouseDown");
+    lua_pushstring(L, "middleMouseDown") ;          lua_rawseti(L, -2, kCGEventOtherMouseDown);
     lua_pushinteger(L, kCGEventOtherMouseUp);       lua_setfield(L, -2, "middleMouseUp");
+    lua_pushstring(L, "middleMouseUp") ;            lua_rawseti(L, -2, kCGEventOtherMouseUp);
     lua_pushinteger(L, kCGEventOtherMouseDragged);  lua_setfield(L, -2, "middleMouseDragged");
+    lua_pushstring(L, "middleMouseDragged") ;       lua_rawseti(L, -2, kCGEventOtherMouseDragged);
     lua_pushinteger(L, kCGEventMouseMoved);         lua_setfield(L, -2, "mouseMoved");
+    lua_pushstring(L, "mouseMoved") ;               lua_rawseti(L, -2, kCGEventMouseMoved);
     lua_pushinteger(L, kCGEventFlagsChanged);       lua_setfield(L, -2, "flagsChanged");
+    lua_pushstring(L, "flagsChanged") ;             lua_rawseti(L, -2, kCGEventFlagsChanged);
     lua_pushinteger(L, kCGEventScrollWheel);        lua_setfield(L, -2, "scrollWheel");
+    lua_pushstring(L, "scrollWheel") ;              lua_rawseti(L, -2, kCGEventScrollWheel);
     lua_pushinteger(L, kCGEventKeyDown);            lua_setfield(L, -2, "keyDown");
+    lua_pushstring(L, "keyDown") ;                  lua_rawseti(L, -2, kCGEventKeyDown);
     lua_pushinteger(L, kCGEventKeyUp);              lua_setfield(L, -2, "keyUp");
+    lua_pushstring(L, "keyUp") ;                    lua_rawseti(L, -2, kCGEventKeyUp);
     lua_pushinteger(L, kCGEventTabletPointer);      lua_setfield(L, -2, "tabletPointer");
+    lua_pushstring(L, "tabletPointer") ;            lua_rawseti(L, -2, kCGEventTabletPointer);
     lua_pushinteger(L, kCGEventTabletProximity);    lua_setfield(L, -2, "tabletProximity");
+    lua_pushstring(L, "tabletProximity") ;          lua_rawseti(L, -2, kCGEventTabletProximity);
     lua_pushinteger(L, kCGEventNull);               lua_setfield(L, -2, "nullEvent");
+    lua_pushstring(L, "nullEvent") ;                lua_rawseti(L, -2, kCGEventNull);
     lua_pushinteger(L, NSMouseEntered);             lua_setfield(L, -2, "NSMouseEntered");
+    lua_pushstring(L, "NSMouseEntered") ;           lua_rawseti(L, -2, NSMouseEntered);
     lua_pushinteger(L, NSMouseExited);              lua_setfield(L, -2, "NSMouseExited");
+    lua_pushstring(L, "NSMouseExited") ;            lua_rawseti(L, -2, NSMouseExited);
     lua_pushinteger(L, NSAppKitDefined);            lua_setfield(L, -2, "NSAppKitDefined");
+    lua_pushstring(L, "NSAppKitDefined") ;          lua_rawseti(L, -2, NSAppKitDefined);
     lua_pushinteger(L, NSSystemDefined);            lua_setfield(L, -2, "NSSystemDefined");
+    lua_pushstring(L, "NSSystemDefined") ;          lua_rawseti(L, -2, NSSystemDefined);
     lua_pushinteger(L, NSApplicationDefined);       lua_setfield(L, -2, "NSApplicationDefined");
+    lua_pushstring(L, "NSApplicationDefined") ;     lua_rawseti(L, -2, NSApplicationDefined);
     lua_pushinteger(L, NSPeriodic);                 lua_setfield(L, -2, "NSPeriodic");
+    lua_pushstring(L, "NSPeriodic") ;               lua_rawseti(L, -2, NSPeriodic);
     lua_pushinteger(L, NSCursorUpdate);             lua_setfield(L, -2, "NSCursorUpdate");
+    lua_pushstring(L, "NSCursorUpdate") ;           lua_rawseti(L, -2, NSCursorUpdate);
     lua_pushinteger(L, NSEventTypeGesture);         lua_setfield(L, -2, "NSEventTypeGesture");
+    lua_pushstring(L, "NSEventTypeGesture") ;       lua_rawseti(L, -2, NSEventTypeGesture);
     lua_pushinteger(L, NSEventTypeMagnify);         lua_setfield(L, -2, "NSEventTypeMagnify");
+    lua_pushstring(L, "NSEventTypeMagnify") ;       lua_rawseti(L, -2, NSEventTypeMagnify);
     lua_pushinteger(L, NSEventTypeSwipe);           lua_setfield(L, -2, "NSEventTypeSwipe");
+    lua_pushstring(L, "NSEventTypeSwipe") ;         lua_rawseti(L, -2, NSEventTypeSwipe);
     lua_pushinteger(L, NSEventTypeRotate);          lua_setfield(L, -2, "NSEventTypeRotate");
+    lua_pushstring(L, "NSEventTypeRotate") ;        lua_rawseti(L, -2, NSEventTypeRotate);
     lua_pushinteger(L, NSEventTypeBeginGesture);    lua_setfield(L, -2, "NSEventTypeBeginGesture");
+    lua_pushstring(L, "NSEventTypeBeginGesture") ;  lua_rawseti(L, -2, NSEventTypeBeginGesture);
     lua_pushinteger(L, NSEventTypeEndGesture);      lua_setfield(L, -2, "NSEventTypeEndGesture");
+    lua_pushstring(L, "NSEventTypeEndGesture") ;    lua_rawseti(L, -2, NSEventTypeEndGesture);
     lua_pushinteger(L, NSEventTypeSmartMagnify);    lua_setfield(L, -2, "NSEventTypeSmartMagnify");
+    lua_pushstring(L, "NSEventTypeSmartMagnify") ;  lua_rawseti(L, -2, NSEventTypeSmartMagnify);
     lua_pushinteger(L, NSEventTypeQuickLook);       lua_setfield(L, -2, "NSEventTypeQuickLook");
+    lua_pushstring(L, "NSEventTypeQuickLook") ;     lua_rawseti(L, -2, NSEventTypeQuickLook);
     lua_pushinteger(L, NSEventTypePressure);        lua_setfield(L, -2, "NSEventTypePressure");
+    lua_pushstring(L, "NSEventTypePressure") ;      lua_rawseti(L, -2, NSEventTypePressure);
 
 //     lua_pushinteger(L, kCGEventTapDisabledByTimeout);    lua_setfield(L, -2, "tapDisabledByTimeout");
+//     lua_pushstring(L, "tapDisabledByTimeout") ;         lua_rawseti(L, -2, kCGEventTapDisabledByTimeout);
 //     lua_pushinteger(L, kCGEventTapDisabledByUserInput);  lua_setfield(L, -2, "tapDisabledByUserInput");
+//     lua_pushstring(L, "tapDisabledByUserInput") ;       lua_rawseti(L, -2, kCGEventTapDisabledByUserInput);
 }
 
 /// hs.eventtap.event.properties -> table
@@ -909,58 +1099,169 @@ static void pushtypestable(lua_State* L) {
 static void pushpropertiestable(lua_State* L) {
     lua_newtable(L);
     lua_pushinteger(L, kCGMouseEventNumber);                                 lua_setfield(L, -2, "mouseEventNumber");
+    lua_pushstring(L, "mouseEventNumber") ;                                 lua_rawseti(L, -2, kCGMouseEventNumber);
     lua_pushinteger(L, kCGMouseEventClickState);                             lua_setfield(L, -2, "mouseEventClickState");
+    lua_pushstring(L, "mouseEventClickState") ;                             lua_rawseti(L, -2, kCGMouseEventClickState);
     lua_pushinteger(L, kCGMouseEventPressure);                               lua_setfield(L, -2, "mouseEventPressure");
+    lua_pushstring(L, "mouseEventPressure") ;                            lua_rawseti(L, -2, kCGMouseEventPressure);
     lua_pushinteger(L, kCGMouseEventButtonNumber);                           lua_setfield(L, -2, "mouseEventButtonNumber");
+    lua_pushstring(L, "mouseEventButtonNumber") ;                           lua_rawseti(L, -2, kCGMouseEventButtonNumber);
     lua_pushinteger(L, kCGMouseEventDeltaX);                                 lua_setfield(L, -2, "mouseEventDeltaX");
+    lua_pushstring(L, "mouseEventDeltaX") ;                                 lua_rawseti(L, -2, kCGMouseEventDeltaX);
     lua_pushinteger(L, kCGMouseEventDeltaY);                                 lua_setfield(L, -2, "mouseEventDeltaY");
+    lua_pushstring(L, "mouseEventDeltaY") ;                                 lua_rawseti(L, -2, kCGMouseEventDeltaY);
     lua_pushinteger(L, kCGMouseEventInstantMouser);                          lua_setfield(L, -2, "mouseEventInstantMouser");
+    lua_pushstring(L, "mouseEventInstantMouser") ;                          lua_rawseti(L, -2, kCGMouseEventInstantMouser);
     lua_pushinteger(L, kCGMouseEventSubtype);                                lua_setfield(L, -2, "mouseEventSubtype");
+    lua_pushstring(L, "mouseEventSubtype") ;                                lua_rawseti(L, -2, kCGMouseEventSubtype);
     lua_pushinteger(L, kCGKeyboardEventAutorepeat);                          lua_setfield(L, -2, "keyboardEventAutorepeat");
+    lua_pushstring(L, "keyboardEventAutorepeat") ;                          lua_rawseti(L, -2, kCGKeyboardEventAutorepeat);
     lua_pushinteger(L, kCGKeyboardEventKeycode);                             lua_setfield(L, -2, "keyboardEventKeycode");
+    lua_pushstring(L, "keyboardEventKeycode") ;                             lua_rawseti(L, -2, kCGKeyboardEventKeycode);
     lua_pushinteger(L, kCGKeyboardEventKeyboardType);                        lua_setfield(L, -2, "keyboardEventKeyboardType");
+    lua_pushstring(L, "keyboardEventKeyboardType") ;                        lua_rawseti(L, -2, kCGKeyboardEventKeyboardType);
     lua_pushinteger(L, kCGScrollWheelEventDeltaAxis1);                       lua_setfield(L, -2, "scrollWheelEventDeltaAxis1");
+    lua_pushstring(L, "scrollWheelEventDeltaAxis1") ;                       lua_rawseti(L, -2, kCGScrollWheelEventDeltaAxis1);
     lua_pushinteger(L, kCGScrollWheelEventDeltaAxis2);                       lua_setfield(L, -2, "scrollWheelEventDeltaAxis2");
+    lua_pushstring(L, "scrollWheelEventDeltaAxis2") ;                       lua_rawseti(L, -2, kCGScrollWheelEventDeltaAxis2);
     lua_pushinteger(L, kCGScrollWheelEventDeltaAxis3);                       lua_setfield(L, -2, "scrollWheelEventDeltaAxis3");
+    lua_pushstring(L, "scrollWheelEventDeltaAxis3") ;                       lua_rawseti(L, -2, kCGScrollWheelEventDeltaAxis3);
     lua_pushinteger(L, kCGScrollWheelEventFixedPtDeltaAxis1);                lua_setfield(L, -2, "scrollWheelEventFixedPtDeltaAxis1");
+    lua_pushstring(L, "scrollWheelEventFixedPtDeltaAxis1") ;                lua_rawseti(L, -2, kCGScrollWheelEventFixedPtDeltaAxis1);
     lua_pushinteger(L, kCGScrollWheelEventFixedPtDeltaAxis2);                lua_setfield(L, -2, "scrollWheelEventFixedPtDeltaAxis2");
+    lua_pushstring(L, "scrollWheelEventFixedPtDeltaAxis2") ;                lua_rawseti(L, -2, kCGScrollWheelEventFixedPtDeltaAxis2);
     lua_pushinteger(L, kCGScrollWheelEventFixedPtDeltaAxis3);                lua_setfield(L, -2, "scrollWheelEventFixedPtDeltaAxis3");
+    lua_pushstring(L, "scrollWheelEventFixedPtDeltaAxis3") ;                lua_rawseti(L, -2, kCGScrollWheelEventFixedPtDeltaAxis3);
     lua_pushinteger(L, kCGScrollWheelEventPointDeltaAxis1);                  lua_setfield(L, -2, "scrollWheelEventPointDeltaAxis1");
+    lua_pushstring(L, "scrollWheelEventPointDeltaAxis1") ;                  lua_rawseti(L, -2, kCGScrollWheelEventPointDeltaAxis1);
     lua_pushinteger(L, kCGScrollWheelEventPointDeltaAxis2);                  lua_setfield(L, -2, "scrollWheelEventPointDeltaAxis2");
+    lua_pushstring(L, "scrollWheelEventPointDeltaAxis2") ;                  lua_rawseti(L, -2, kCGScrollWheelEventPointDeltaAxis2);
     lua_pushinteger(L, kCGScrollWheelEventPointDeltaAxis3);                  lua_setfield(L, -2, "scrollWheelEventPointDeltaAxis3");
+    lua_pushstring(L, "scrollWheelEventPointDeltaAxis3") ;                  lua_rawseti(L, -2, kCGScrollWheelEventPointDeltaAxis3);
     lua_pushinteger(L, kCGScrollWheelEventInstantMouser);                    lua_setfield(L, -2, "scrollWheelEventInstantMouser");
+    lua_pushstring(L, "scrollWheelEventInstantMouser") ;                    lua_rawseti(L, -2, kCGScrollWheelEventInstantMouser);
     lua_pushinteger(L, kCGTabletEventPointX);                                lua_setfield(L, -2, "tabletEventPointX");
+    lua_pushstring(L, "tabletEventPointX") ;                                lua_rawseti(L, -2, kCGTabletEventPointX);
     lua_pushinteger(L, kCGTabletEventPointY);                                lua_setfield(L, -2, "tabletEventPointY");
+    lua_pushstring(L, "tabletEventPointY") ;                                lua_rawseti(L, -2, kCGTabletEventPointY);
     lua_pushinteger(L, kCGTabletEventPointZ);                                lua_setfield(L, -2, "tabletEventPointZ");
+    lua_pushstring(L, "tabletEventPointZ") ;                                lua_rawseti(L, -2, kCGTabletEventPointZ);
     lua_pushinteger(L, kCGTabletEventPointButtons);                          lua_setfield(L, -2, "tabletEventPointButtons");
+    lua_pushstring(L, "tabletEventPointButtons") ;                          lua_rawseti(L, -2, kCGTabletEventPointButtons);
     lua_pushinteger(L, kCGTabletEventPointPressure);                         lua_setfield(L, -2, "tabletEventPointPressure");
+    lua_pushstring(L, "tabletEventPointPressure") ;                         lua_rawseti(L, -2, kCGTabletEventPointPressure);
     lua_pushinteger(L, kCGTabletEventTiltX);                                 lua_setfield(L, -2, "tabletEventTiltX");
+    lua_pushstring(L, "tabletEventTiltX") ;                                 lua_rawseti(L, -2, kCGTabletEventTiltX);
     lua_pushinteger(L, kCGTabletEventTiltY);                                 lua_setfield(L, -2, "tabletEventTiltY");
+    lua_pushstring(L, "tabletEventTiltY") ;                                 lua_rawseti(L, -2, kCGTabletEventTiltY);
     lua_pushinteger(L, kCGTabletEventRotation);                              lua_setfield(L, -2, "tabletEventRotation");
+    lua_pushstring(L, "tabletEventRotation") ;                              lua_rawseti(L, -2, kCGTabletEventRotation);
     lua_pushinteger(L, kCGTabletEventTangentialPressure);                    lua_setfield(L, -2, "tabletEventTangentialPressure");
+    lua_pushstring(L, "tabletEventTangentialPressure") ;                    lua_rawseti(L, -2, kCGTabletEventTangentialPressure);
     lua_pushinteger(L, kCGTabletEventDeviceID);                              lua_setfield(L, -2, "tabletEventDeviceID");
+    lua_pushstring(L, "tabletEventDeviceID") ;                              lua_rawseti(L, -2, kCGTabletEventDeviceID);
     lua_pushinteger(L, kCGTabletEventVendor1);                               lua_setfield(L, -2, "tabletEventVendor1");
+    lua_pushstring(L, "tabletEventVendor1") ;                               lua_rawseti(L, -2, kCGTabletEventVendor1);
     lua_pushinteger(L, kCGTabletEventVendor2);                               lua_setfield(L, -2, "tabletEventVendor2");
+    lua_pushstring(L, "tabletEventVendor2") ;                               lua_rawseti(L, -2, kCGTabletEventVendor2);
     lua_pushinteger(L, kCGTabletEventVendor3);                               lua_setfield(L, -2, "tabletEventVendor3");
+    lua_pushstring(L, "tabletEventVendor3") ;                               lua_rawseti(L, -2, kCGTabletEventVendor3);
     lua_pushinteger(L, kCGTabletProximityEventVendorID);                     lua_setfield(L, -2, "tabletProximityEventVendorID");
+    lua_pushstring(L, "tabletProximityEventVendorID") ;                     lua_rawseti(L, -2, kCGTabletProximityEventVendorID);
     lua_pushinteger(L, kCGTabletProximityEventTabletID);                     lua_setfield(L, -2, "tabletProximityEventTabletID");
+    lua_pushstring(L, "tabletProximityEventTabletID") ;                     lua_rawseti(L, -2, kCGTabletProximityEventTabletID);
     lua_pushinteger(L, kCGTabletProximityEventPointerID);                    lua_setfield(L, -2, "tabletProximityEventPointerID");
+    lua_pushstring(L, "tabletProximityEventPointerID") ;                    lua_rawseti(L, -2, kCGTabletProximityEventPointerID);
     lua_pushinteger(L, kCGTabletProximityEventDeviceID);                     lua_setfield(L, -2, "tabletProximityEventDeviceID");
+    lua_pushstring(L, "tabletProximityEventDeviceID") ;                     lua_rawseti(L, -2, kCGTabletProximityEventDeviceID);
     lua_pushinteger(L, kCGTabletProximityEventSystemTabletID);               lua_setfield(L, -2, "tabletProximityEventSystemTabletID");
+    lua_pushstring(L, "tabletProximityEventSystemTabletID") ;               lua_rawseti(L, -2, kCGTabletProximityEventSystemTabletID);
     lua_pushinteger(L, kCGTabletProximityEventVendorPointerType);            lua_setfield(L, -2, "tabletProximityEventVendorPointerType");
+    lua_pushstring(L, "tabletProximityEventVendorPointerType") ;            lua_rawseti(L, -2, kCGTabletProximityEventVendorPointerType);
     lua_pushinteger(L, kCGTabletProximityEventVendorPointerSerialNumber);    lua_setfield(L, -2, "tabletProximityEventVendorPointerSerialNumber");
+    lua_pushstring(L, "tabletProximityEventVendorPointerSerialNumber") ;    lua_rawseti(L, -2, kCGTabletProximityEventVendorPointerSerialNumber);
     lua_pushinteger(L, kCGTabletProximityEventVendorUniqueID);               lua_setfield(L, -2, "tabletProximityEventVendorUniqueID");
+    lua_pushstring(L, "tabletProximityEventVendorUniqueID") ;               lua_rawseti(L, -2, kCGTabletProximityEventVendorUniqueID);
     lua_pushinteger(L, kCGTabletProximityEventCapabilityMask);               lua_setfield(L, -2, "tabletProximityEventCapabilityMask");
+    lua_pushstring(L, "tabletProximityEventCapabilityMask") ;               lua_rawseti(L, -2, kCGTabletProximityEventCapabilityMask);
     lua_pushinteger(L, kCGTabletProximityEventPointerType);                  lua_setfield(L, -2, "tabletProximityEventPointerType");
+    lua_pushstring(L, "tabletProximityEventPointerType") ;                  lua_rawseti(L, -2, kCGTabletProximityEventPointerType);
     lua_pushinteger(L, kCGTabletProximityEventEnterProximity);               lua_setfield(L, -2, "tabletProximityEventEnterProximity");
+    lua_pushstring(L, "tabletProximityEventEnterProximity") ;               lua_rawseti(L, -2, kCGTabletProximityEventEnterProximity);
     lua_pushinteger(L, kCGEventTargetProcessSerialNumber);                   lua_setfield(L, -2, "eventTargetProcessSerialNumber");
+    lua_pushstring(L, "eventTargetProcessSerialNumber") ;                   lua_rawseti(L, -2, kCGEventTargetProcessSerialNumber);
     lua_pushinteger(L, kCGEventTargetUnixProcessID);                         lua_setfield(L, -2, "eventTargetUnixProcessID");
+    lua_pushstring(L, "eventTargetUnixProcessID") ;                         lua_rawseti(L, -2, kCGEventTargetUnixProcessID);
     lua_pushinteger(L, kCGEventSourceUnixProcessID);                         lua_setfield(L, -2, "eventSourceUnixProcessID");
+    lua_pushstring(L, "eventSourceUnixProcessID") ;                         lua_rawseti(L, -2, kCGEventSourceUnixProcessID);
     lua_pushinteger(L, kCGEventSourceUserData);                              lua_setfield(L, -2, "eventSourceUserData");
+    lua_pushstring(L, "eventSourceUserData") ;                              lua_rawseti(L, -2, kCGEventSourceUserData);
     lua_pushinteger(L, kCGEventSourceUserID);                                lua_setfield(L, -2, "eventSourceUserID");
+    lua_pushstring(L, "eventSourceUserID") ;                                lua_rawseti(L, -2, kCGEventSourceUserID);
     lua_pushinteger(L, kCGEventSourceGroupID);                               lua_setfield(L, -2, "eventSourceGroupID");
+    lua_pushstring(L, "eventSourceGroupID") ;                               lua_rawseti(L, -2, kCGEventSourceGroupID);
     lua_pushinteger(L, kCGEventSourceStateID);                               lua_setfield(L, -2, "eventSourceStateID");
+    lua_pushstring(L, "eventSourceStateID") ;                               lua_rawseti(L, -2, kCGEventSourceStateID);
     lua_pushinteger(L, kCGScrollWheelEventIsContinuous);                     lua_setfield(L, -2, "scrollWheelEventIsContinuous");
+    lua_pushstring(L, "scrollWheelEventIsContinuous") ;                     lua_rawseti(L, -2, kCGScrollWheelEventIsContinuous);
+}
+
+/// hs.eventtap.event.rawFlagMasks[]
+/// Constant
+/// A table containing key-value pairs describing the raw modifier flags which can be manipulated with [hs.eventtap.event:rawFlags](#rawFlags).
+///
+/// This table and [hs.eventtap.event:rawFlags](#rawFlags) are both considered experimental as the full meanings behind some of these flags and what combinations are likely to be observed is still being determined.  It is possible that some of these key names may change in the future.
+///
+/// At present, what is known about the flags is presented here:
+///  * alternate                 - Corresponds to the left (or only) alt key on the keyboard
+///  * command                   - Corresponds to the left (or only) cmd key on the keyboard
+///  * control                   - Corresponds to the left (or only) ctrl key on the keyboard
+///  * shift                     - Corresponds to the left (or only) shift key on the keyboard
+///  * numericPad                - Indicates that the key corresponds to one defined as belonging to the numeric keypad, if present
+///  * secondaryFn               - Indicates the fn key found on most modern Macintosh laptops.  May also be observed with function and other special keys (arrows, page-up/down, etc.)
+///  * deviceRightAlternate      - Corresponds to the right alt key on the keyboard (if present)
+///  * deviceRightCommand        - Corresponds to the right cmd key on the keyboard (if present)
+///  * deviceRightControl        - Corresponds to the right ctrl key on the keyboard (if present)
+///  * deviceRightShift          - Corresponds to the right alt key on the keyboard (if present)
+///  * nonCoalesced              - Indicates that multiple mouse movements are not being coalesced into one event if delivery of the event has been delayed
+///
+/// The following are also defined in IOLLEvent.h, but the description is a guess since I have not observed them myself
+///  * alphaShift                - related to the caps-lock in some way?
+///  * alphaShiftStateless       - related to the caps-lock in some way?
+///  * deviceAlphaShiftStateless - related to the caps-lock in some way?
+///  * deviceLeftAlternate       -
+///  * deviceLeftCommand         -
+///  * deviceLeftControl         -
+///  * deviceLeftShift           -
+///  * help                      - related to a modifier found on old NeXT keyboards but not on modern keyboards?
+///
+/// It has also been observed that synthetic events that have been posted also have the bit represented by 0x20000000 set.  This constant does not appear in IOLLEvent.h or CGEventTypes.h, which defines most of the constants used in this module, so it is not included within this table at present, but may be added in the future if any corroborating information can be found.
+///
+/// For what it may be worth, I have found it most useful to filter out `nonCoalesced` and 0x20000000 before examining the flags in my own code, like this: `hs.eventtap.event:rawFlags() & 0xdffffeff` where 0xdffffeff = ~(0x20000000 | 0x100) (limited to the 32 bits since that is what is returned by `rawFlags`).
+///
+/// Any documentation or references that can be found which can further expand on the information here is welcome -- Please submit any information you may have through the Hammerspoon GitHub site or Google group.
+static int push_flagMasks(lua_State *L) {
+    lua_newtable(L) ;
+    lua_pushinteger(L, NX_ALPHASHIFTMASK) ;                   lua_setfield(L, -2, "alphaShift") ;
+    lua_pushinteger(L, NX_SHIFTMASK) ;                        lua_setfield(L, -2, "shift") ;
+    lua_pushinteger(L, NX_CONTROLMASK) ;                      lua_setfield(L, -2, "control") ;
+    lua_pushinteger(L, NX_ALTERNATEMASK) ;                    lua_setfield(L, -2, "alternate") ;
+    lua_pushinteger(L, NX_COMMANDMASK) ;                      lua_setfield(L, -2, "command") ;
+    lua_pushinteger(L, NX_NUMERICPADMASK) ;                   lua_setfield(L, -2, "numericPad") ;
+    lua_pushinteger(L, NX_HELPMASK) ;                         lua_setfield(L, -2, "help") ;
+    lua_pushinteger(L, NX_SECONDARYFNMASK) ;                  lua_setfield(L, -2, "secondaryFn") ;
+    lua_pushinteger(L, NX_DEVICELCTLKEYMASK) ;                lua_setfield(L, -2, "deviceLeftControl") ;
+    lua_pushinteger(L, NX_DEVICERCTLKEYMASK) ;                lua_setfield(L, -2, "deviceRightControl") ;
+    lua_pushinteger(L, NX_DEVICELSHIFTKEYMASK) ;              lua_setfield(L, -2, "deviceLeftShift") ;
+    lua_pushinteger(L, NX_DEVICERSHIFTKEYMASK) ;              lua_setfield(L, -2, "deviceRightShift") ;
+    lua_pushinteger(L, NX_DEVICELCMDKEYMASK) ;                lua_setfield(L, -2, "deviceLeftCommand") ;
+    lua_pushinteger(L, NX_DEVICERCMDKEYMASK) ;                lua_setfield(L, -2, "deviceRightCommand") ;
+    lua_pushinteger(L, NX_DEVICELALTKEYMASK) ;                lua_setfield(L, -2, "deviceLeftAlternate") ;
+    lua_pushinteger(L, NX_DEVICERALTKEYMASK) ;                lua_setfield(L, -2, "deviceRightAlternate") ;
+    lua_pushinteger(L, NX_ALPHASHIFT_STATELESS_MASK) ;        lua_setfield(L, -2, "alphaShiftStateless") ;
+    lua_pushinteger(L, NX_DEVICE_ALPHASHIFT_STATELESS_MASK) ; lua_setfield(L, -2, "deviceAlphaShiftStateless") ;
+    lua_pushinteger(L, NX_NONCOALSESCEDMASK) ;                lua_setfield(L, -2, "nonCoalesced") ;
+    return 1 ;
 }
 
 static int userdata_tostring(lua_State* L) {
@@ -981,6 +1282,11 @@ static int meta_gc(lua_State* __unused L) {
 
 // Metatable for created objects when _new invoked
 static const luaL_Reg eventtapevent_metalib[] = {
+    {"asData",          eventtap_event_asData},
+    {"location",        eventtap_event_location},
+    {"rawFlags",        eventtap_event_rawFlags},
+    {"timestamp",       eventtap_event_timestamp},
+    {"setType",         eventtap_event_setType},
     {"copy",            eventtap_event_copy},
     {"getFlags",        eventtap_event_getFlags},
     {"setFlags",        eventtap_event_setFlags},
@@ -1001,10 +1307,12 @@ static const luaL_Reg eventtapevent_metalib[] = {
 
 // Functions for returned object when module loads
 static luaL_Reg eventtapeventlib[] = {
-    {"newKeyEvent",        eventtap_event_newKeyEvent},
-    {"newSystemKeyEvent",  eventtap_event_newSystemKeyEvent},
-    {"_newMouseEvent",     eventtap_event_newMouseEvent},
-    {"newScrollEvent",     eventtap_event_newScrollWheelEvent},
+    {"newEvent",          eventtap_event_newEvent},
+    {"newEventFromData",  eventtap_event_newEventFromData},
+    {"newKeyEvent",       eventtap_event_newKeyEvent},
+    {"newSystemKeyEvent", eventtap_event_newSystemKeyEvent},
+    {"_newMouseEvent",    eventtap_event_newMouseEvent},
+    {"newScrollEvent",    eventtap_event_newScrollWheelEvent},
     {NULL,                NULL}
 };
 
@@ -1080,6 +1388,8 @@ int luaopen_hs_eventtap_event(lua_State* L) {
 
     pushpropertiestable(L);
     lua_setfield(L, -2, "properties");
+
+    push_flagMasks(L) ; lua_setfield(L, -2, "rawFlagMasks") ;
 
     eventSource = nil;
 

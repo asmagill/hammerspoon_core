@@ -85,10 +85,15 @@ local function getMods(mods)
   return r
 end
 
+-- note the tables backing these constants should be modified to only include the string -> number
+-- assignments before they can be safely wrapped with ls.makeConstantsTable, but as there is a pull
+-- outstanding which modifies these tables, this is being delayed to simplify merging.
 module.event.types      = setmetatable(module.event.types,      { __index    = __index_for_types,
                                                                   __tostring = __tostring_for_tables })
 module.event.properties = setmetatable(module.event.properties, { __index    = __index_for_props,
                                                                   __tostring = __tostring_for_tables })
+
+module.event.rawFlagMasks = ls.makeConstantsTable(module.event.rawFlagMasks)
 
 -- Public interface ------------------------------------------------------
 
@@ -109,7 +114,7 @@ end
 ---
 --- Parameters:
 ---  * eventtype - One of the values from `hs.eventtap.event.types`
----  * point - A table with keys `{x, y}` indicating the location where the mouse event should occur
+---  * point - An hs.geometry point table (i.e. of the form `{x=123, y=456}`) indicating the location where the mouse event should occur
 ---  * modifiers - An optional table containing zero or more of the following keys:
 ---   * cmd
 ---   * alt
