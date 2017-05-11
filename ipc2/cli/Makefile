@@ -1,20 +1,20 @@
-PREFIX ?= /usr/local
-LDFLAGS += -framework CoreFoundation -ledit
 
-all: hs2
+DEBUG_CFLAGS ?= -g
 
-hs2: hs2.o
+TARGET = hs
+#CC=cc
+CC=@clang
+WARNINGS ?= -Weverything -Wno-objc-missing-property-synthesis -Wno-implicit-atomic-properties -Wno-direct-ivar-access -Wno-cstring-format-directive -Wno-padded -Wno-covered-switch-default -Wno-missing-prototypes -Werror-implicit-function-declaration
+EXTRA_CFLAGS ?= -framework Foundation -framework CoreFoundation -mmacosx-version-min=10.10
+EXTRA_LDFLAGS ?=  -ledit
 
-install: hs2
-	mkdir -p $(PREFIX)/{share/man/man1,bin}
-	install -m 0755 hs2 $(PREFIX)/bin
-	install -m 0644 hs2.1 $(PREFIX)/share/man/man1
+CFLAGS  += $(DEBUG_CFLAGS) -fmodules -fobjc-arc $(WARNINGS) $(EXTRA_CFLAGS)
+LDFLAGS += $(EXTRA_LDFLAGS)
 
-uninstall:
-	rm -fr $(PREFIX)/bin/hs2
-	rm -fr $(PREFIX)/share/man/man1/hs2.1
+all: $(TARGET)
+
+$(TARGET): $(TARGET).m
+	$(CC) $< $(CFLAGS) $(LDFLAGS) -o $@
 
 clean:
-	rm -rf hs2.o hs2
-
-.PHONY: all install clean
+	rm -fr $(TARGET) *.dSYM

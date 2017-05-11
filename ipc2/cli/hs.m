@@ -1,11 +1,8 @@
 // TODO:
-//   set console mode from cmd line and include in registration
-//       or find other way to persist setting via cli through re-connect
-//   allow arbitrary binary from stdin (i.e. don't choke on null in string
-//   allow read from file via -f
-//   support #! /path/to/hs (if last arg is a file, assume -f?) is there another way to tell?
-//      when invoked this way, should args only include those after filename?
-//      are args after filename parsed by hs or ignored (implicit --)? separate args array?
+// * set console mode from cmd line and include in registration
+// * allow arbitrary binary from stdin (i.e. don't choke on null in string
+// * allow read from file via -f: instead, if arg starts with ./, /, or ~ treat as file and stop parsing args
+// * support #! /path/to/hs (if last arg is a file, assume -f?) is there another way to tell?
 //   Document (man page, printUsage, HS docs)
 //   Decide on legacy mode support... and legacy auto-detection?
 
@@ -13,6 +10,9 @@
 @import CoreFoundation ;
 @import Darwin.sysexits ;
 #include <editline/readline.h>
+
+static NSString       *defaultPortName = @"hsCommandLine" ;
+static CFTimeInterval defaultTimeout   = 4.0 ;
 
 // #define DEBUG
 
@@ -29,6 +29,7 @@
 @property CFMessagePortRef remotePort ;
 @property NSString         *remoteName ;
 @property NSString         *localName ;
+@property NSString         *console ;
 
 @property CFTimeInterval   sendTimeout ;
 @property CFTimeInterval   recvTimeout ;
@@ -101,10 +102,12 @@ static const char *portError(SInt32 code) {
 
         _useColors   = inColor ;
         [self updateColorStrings] ;
+
         _arguments   = nil ;
         _sendTimeout = 4.0 ;
         _recvTimeout = 4.0 ;
-        _exitCode   = EX_TEMPFAIL ; // until the thread is actually ready
+        _exitCode    = EX_TEMPFAIL ; // until the thread is actually ready
+        _console     = @"none" ;
     }
     return self ;
 }
@@ -131,11 +134,6 @@ static const char *portError(SInt32 code) {
 
             if (error) {
                 NSString *errorMsg = _localPort ? [NSString stringWithFormat:@"%@ port name already in use", _localName] : @"failed to create new local port" ;
-//                 // pedantic, I know, but proper cleanup... maybe it will become a habit eventually
-//                 if (_localPort)  CFRelease(_localPort) ;
-//                 if (_remotePort) CFRelease(_remotePort) ;
-//                 _localPort  = NULL ;
-//                 _remotePort = NULL ;
                 fprintf(stderr, "error: %s\n", errorMsg.UTF8String);
                 _exitCode = EX_UNAVAILABLE ;
                 [self cancel] ;
@@ -147,10 +145,6 @@ static const char *portError(SInt32 code) {
                 CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoop, kCFRunLoopCommonModes);
                 CFRelease(runLoop) ;
             } else {
-//                 if (_localPort)  CFRelease(_localPort) ;
-//                 if (_remotePort) CFRelease(_remotePort) ;
-//                 _localPort  = NULL ;
-//                 _remotePort = NULL ;
                 fprintf(stderr, "unable to create runloop source for local port\n");
                 _exitCode = EX_UNAVAILABLE ;
                 [self cancel] ;
@@ -250,7 +244,7 @@ static const char *portError(SInt32 code) {
             NSData* data = [NSJSONSerialization dataWithJSONObject:_arguments options:(NSJSONWritingOptions)0 error:&error];
             if (!error && data) {
                 NSString* str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                registration = [NSString stringWithFormat:@"%@:%@", _localName, str] ;
+                registration = [NSString stringWithFormat:@"%@:%@:%@", _localName, _console, str] ;
             } else {
                 fprintf(stderr, "unable to serialize arguments for registration: %s\n", error.localizedDescription.UTF8String);
             }
@@ -278,7 +272,7 @@ static const char *portError(SInt32 code) {
     return YES ;
 }
 
-- (BOOL)executeCommand:(NSString *)command {
+- (BOOL)executeCommand:(id)command {
     NSError *error ;
     NSData *response = [self sendToRemote:command msgID:0 wantResponse:YES error:&error];
     if (error) {
@@ -294,7 +288,27 @@ static const char *portError(SInt32 code) {
 @end
 
 static void printUsage(const char *cmd) {
-    printf("usage: %s ... I'm working on it...\n", cmd) ;
+    printf("\n") ;
+    printf("usage: %s [arguments] [file]\n", cmd) ;
+    printf("\n") ;
+    printf("    -c cmd     Specifies a Hammerspoon command to execute. May be specified more than once and commands will be executed in the order they appear. Disables colorized output unless -N is present. Disables interactive mode unless -i is present. If -i is present or if stdin is a pipe, these commands will be executed first.\n") ;
+    printf("    -C         Enable print mirroring from the Hammerspoon Console to this instance. Disables -P. Unlike modifying `_cli.console` within an instance, this setting will persist if the instance has to reconnect.\n") ;
+    printf("    -h         Displays this help and exits.\n") ;
+    printf("    -i         Enable interactive mode. Default unless -c argument is present. In interactive mode, if the connection to Hammerspoon becomes invalid, usually because Hammerspoon has been reloaded, this tool will attempt to reconnect when submitting the user input before exiting with an error.\n") ;
+    printf("    -L         Force legacy mode.  Shouldn't be required unless you are using a custom remote port setup.\n") ;
+    printf("    -m name    Specify the remote port to connect to. Defaults to %s.\n", defaultPortName.UTF8String) ;
+    printf("    -n         Disable colorized output. Automatic if stdin is a pipe, output is redirected, or as specified below.\n") ;
+    printf("    -N         Force colorized output even when it would normally not be enabled.\n") ;
+    printf("    -P         Enable print mirroring from this instance to the Hammerspoon Console. Disables -C. Unlike modifying `_cli.console` within an instance, this setting will persist if the instance has to reconnect.\n") ;
+    printf("    -s         Read stdin for the contents to execute and exit.  Included for backwards compatibility as this tool now detects when stdin is a pipe automatically. Disables colorized output unless -N is present. Disables interactive mode.\n") ;
+    printf("    -t sec     Specifies the send and receive timeouts in seconds.  Defaults to %f seconds.\n", defaultTimeout) ;
+    printf("    --         Ignore all arguments following, allowing custom arguments to be passed into the cli instance.\n") ;
+    printf("    /path/file Specifies a file containing Hammerspoon code to load and execute. Must start with  ~, ./, or / and be a file readable by the user.  Disables colorized output unless -N is present.  Disables interactive mode unless -i is present. Like --, all arguments following are passed in unparsed.\n") ;
+    printf("\n") ;
+    printf("Within the instance, console behavior can also be modified by modifying the `_cli.console` variable.  Set this variable to true to enable print mirroring from the Hammerspoon Console to this instance. Set this variable to nil to enable print mirroring from this instance to the Hammerspoon Console (legacy behavior).  Set this variable to false (the default) to disable print mirroring in either direction. This change does not carry over if the instance has to reconnect to Hammerspoon because of a reload or lost connection.\n") ;
+    printf("\n") ;
+    printf("Within the instance, all arguments passed to the %s executable are available as strings in the `_cli._args` array.  If the -- argument or a file path is present, that argument and all arguments that follow will be available as strings in the `_cli.args` array; otherwise the `_cli.args` array will be a mirror of `_cli._args`.\n", cmd) ;
+    printf("\n") ;
 }
 
 int main()
@@ -303,34 +317,48 @@ int main()
 
     @autoreleasepool {
 
-        BOOL           readStdIn   = (BOOL)!isatty(fileno(stdin)) ;
+        BOOL           readStdIn   = (BOOL)!isatty(STDIN_FILENO) ;
+        BOOL           readFile    = NO ;
         BOOL           interactive = !readStdIn ;
-        BOOL           useColors   = interactive && (BOOL)isatty(fileno(stdout)) ;
+        BOOL           useColors   = interactive && (BOOL)isatty(STDOUT_FILENO) ;
         BOOL           legacyMode  = NO ;
-        NSString       *portName   = @"hsCommandLine" ;
-        CFTimeInterval timeout     = 4.0 ;
+        NSString       *portName   = defaultPortName ;
+        NSString       *console    = @"none" ;
+        NSString       *fileName   = nil ;
+
+        CFTimeInterval timeout     = defaultTimeout ;
 
         NSMutableArray<NSString *> *preRun     = nil ;
 
         NSArray<NSString *> *args = [[NSProcessInfo processInfo] arguments] ;
         NSUInteger idx   = 1 ; // skip command name
 
+        BOOL seenColors      = NO ;
+        BOOL seenInteractive = NO ;
+
         while(idx < args.count) {
             NSString *errorMsg = nil ;
 
             if ([args[idx] isEqualToString:@"-i"]) {
-                readStdIn   = NO ;
-                interactive = YES ;
+                readStdIn       = NO ;
+                interactive     = YES ;
+                seenInteractive = YES ;
+// Not really necessary, except maybe for backwards compatibility?
             } else if ([args[idx] isEqualToString:@"-s"]) {
                 interactive = NO ;
-                useColors   = NO ;
                 readStdIn   = YES ;
+                if (!seenColors) useColors = NO ;
             } else if ([args[idx] isEqualToString:@"-n"]) {
                 useColors = NO ;
             } else if ([args[idx] isEqualToString:@"-N"]) {
-                useColors = YES ;
+                useColors  = YES ;
+                seenColors = YES ;
             } else if ([args[idx] isEqualToString:@"-L"]) {
                 legacyMode = YES ;
+            } else if ([args[idx] isEqualToString:@"-C"]) {
+                console = @"mirror" ;
+            } else if ([args[idx] isEqualToString:@"-P"]) {
+                console = @"legacy" ;
             } else if ([args[idx] isEqualToString:@"-m"]) {
                 if ((idx + 1) < args.count) {
                     idx++ ;
@@ -343,8 +371,8 @@ int main()
                 if ((idx + 1) < args.count) {
                     idx++ ;
                     preRun[preRun.count] = args[idx] ;
-                    useColors   = NO ;
-                    interactive = NO ;
+                    if (!seenColors)      useColors   = NO ;
+                    if (!seenInteractive) interactive = NO ;
                 } else {
                     errorMsg = @"option requires an argument" ;
                 }
@@ -360,12 +388,23 @@ int main()
                 exit(EX_OK) ;
             } else if ([args[idx] isEqualToString:@"--"]) {
                 break ; // remaining arguments are to be passed in as is
+            } else if ([args[idx] hasPrefix:@"~"] || [args[idx] hasPrefix:@"./"] || [args[idx] hasPrefix:@"/"]) {
+                fileName = [args[idx] stringByExpandingTildeInPath] ;
+                if (access(fileName.UTF8String, R_OK) == 0) {
+                    readFile  = YES ;
+                    readStdIn = NO ; // maybe capture and save as _cli.stdin?
+                    if (!seenColors)      useColors   = NO ;
+                    if (!seenInteractive) interactive = NO ;
+                    break ; // remaining arguments are to be passed in as is
+                } else {
+                    errorMsg = [NSString stringWithFormat:@"%s", strerror(errno)] ;
+                }
             } else {
                 errorMsg = @"illegal option" ;
             }
 
             if (errorMsg) {
-                fprintf(stderr, "%s: %s: %s\n", args[0].UTF8String, errorMsg.UTF8String, [args[idx] substringFromIndex:1].UTF8String) ;
+                fprintf(stderr, "%s: %s: %s\n", args[0].UTF8String, errorMsg.UTF8String, args[idx].UTF8String) ;
                 exit(EX_USAGE) ;
             }
             idx++ ;
@@ -391,6 +430,7 @@ int main()
         core.sendTimeout = timeout ;
         core.recvTimeout = timeout ;
         core.arguments   = args ;
+        core.console     = console ;
 
 #ifdef DEBUG
         fprintf(stderr, "DEBUG\tCLI local port %s\n", core.localName.UTF8String) ;
@@ -414,11 +454,11 @@ int main()
         }
 
         if (core.exitCode == EX_OK && readStdIn) {
-            NSMutableString *command = [[NSMutableString alloc] init] ;
+            NSMutableData *command = [[NSMutableData alloc] init] ;
             char buffer[BUFSIZ];
-            while (fgets(buffer, BUFSIZ, stdin)) {
-                NSString *cmd = [NSString stringWithCString:buffer encoding:NSUTF8StringEncoding] ;
-                [command appendString:cmd] ;
+            size_t readLength ;
+            while((readLength = fread(buffer, 1, BUFSIZ, stdin)) > 0) {
+                [command appendBytes:buffer length:readLength] ;
             }
 
             if (ferror(stdin)) {
@@ -429,6 +469,44 @@ int main()
                 if (!status) {
                     if (core.exitCode == EX_OK) core.exitCode = EX_DATAERR ;
                 }
+            }
+        }
+
+        if (core.exitCode == EX_OK && readFile) {
+            FILE *fp = fopen(fileName.UTF8String, "r") ;
+            if (fp) {
+                NSMutableData *file = [[NSMutableData alloc] init] ;
+                char buffer[BUFSIZ];
+                size_t readLength ;
+                while((readLength = fread(buffer, 1, BUFSIZ, fp)) > 0) {
+                    [file appendBytes:buffer length:readLength] ;
+                }
+
+                if (ferror(fp)) {
+                    perror("error reading from file:");
+                    core.exitCode = EX_NOINPUT ;
+                } else {
+                    char shebang[2] ;
+                    [file getBytes:&shebang length:2] ;
+                    if (shebang[0] == '#' && shebang[1] == '!') {
+                        NSUInteger position = 1 ;
+                        while ((position < file.length) && (shebang[0] != '\n') && (shebang[0] != '\r')) {
+                            position++ ;
+                            [file getBytes:&shebang range:NSMakeRange(position, 1)] ;
+                        }
+                        if (position < file.length) {
+                            file = [[file subdataWithRange:NSMakeRange(position, file.length - position)] mutableCopy] ;
+                        } // else give up and let it cause an error
+                    }
+                    BOOL status = [core executeCommand:file] ;
+                    if (!status) {
+                        if (core.exitCode == EX_OK) core.exitCode = EX_DATAERR ;
+                    }
+                }
+                fclose(fp) ;
+            } else {
+                perror("error openning file:");
+                core.exitCode = EX_NOINPUT ;
             }
         }
 

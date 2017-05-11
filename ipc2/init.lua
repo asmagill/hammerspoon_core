@@ -251,16 +251,35 @@ end)
 
 module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
     if msgID == MSG_ID.REGISTER then      -- registering a new instance
-        local instanceID, arguments = msg:match("^([%w-]+):(.*)$")
-        if not instanceID then instanceID, arguments = msg, nil end
-        if arguments then arguments = json.decode(arguments) end
+        local instanceID, console, arguments = msg:match("^([%w-]+):(%w+):(.*)$")
+        if not instanceID then instanceID, console, arguments = msg, "none", nil end
+        local scriptArguments = nil
+        if arguments then
+            arguments = json.decode(arguments)
+            scriptArguments = {}
+            local seenSeparator = false
+            for i, v in ipairs(arguments) do
+                if i > 1 and (v == "--" or v:match("^~") or v:match("^%.?/")) then seenSeparator = true end
+                if seenSeparator then table.insert(scriptArguments, v) end
+            end
+            if #scriptArguments == 0 then scriptArguments = arguments end
+        end
         log.df("registering %s", instanceID)
+
+        if console == "legacy" then
+            console = nil
+        elseif console == "mirror" then
+            console = true
+        else
+            console = false
+        end
 
         module.__registeredCLIInstances[instanceID] = setmetatable({
             _cli = {
                 remote  = module.remotePort(instanceID),
-                console = false,
-                args    = arguments,
+                console = console,
+                _args   = arguments,
+                args    = scriptArguments,
             },
             print  = function(...)
                 local things = table.pack(...)
@@ -275,9 +294,9 @@ module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
             end,
         }, {
             __index    = _G,
-            __newindex = function(self, key, value)
-                _G[key] = value
-            end,
+           __newindex = function(self, key, value)
+               _G[key] = value
+           end,
         })
     elseif msgID == MSG_ID.UNREGISTER then  -- unregistering an instance
         log.df("unregistering %s", msg)
@@ -288,8 +307,8 @@ module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
 --        print(msg, instanceID, code)
         if instanceID then
             local fnEnv = module.__registeredCLIInstances[instanceID]
-            local fn, err = load("return " .. code, "chunk", "bt", fnEnv)
-            if not fn then fn, err = load(code, "chunk", "bt", fnEnv) end
+            local fn, err = load("return " .. code, "return " .. code, "bt", fnEnv)
+            if not fn then fn, err = load(code, code, "bt", fnEnv) end
             local results = fn and table.pack(pcall(fn)) or { false, err, n = 2 }
 
             local str = (results.n > 1) and tostring(results[2]) or ""
