@@ -251,7 +251,7 @@ static const char *portError(SInt32 code) {
         }
 
         NSError *error = nil ;
-        [self sendToRemote:registration msgID:MSGID_REGISTER wantResponse:NO error:&error] ;
+        [self sendToRemote:registration msgID:MSGID_REGISTER wantResponse:YES error:&error] ;
         if (error) {
             fprintf(stderr, "error registering CLI instance with Hammerspoon: %s\n", portError((SInt32)error.code));
             return NO ;
