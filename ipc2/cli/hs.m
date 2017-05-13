@@ -234,10 +234,8 @@ static const char *portError(SInt32 code) {
     NSMutableData *dataToSend = [NSMutableData data] ;
     if (msgid == MSGID_COMMAND) {
         // prepend our UUID so the receiving callback knows which instance to communicate with
-        UInt8 j= 0x00;
-        NSData *prefix = [_localName dataUsingEncoding:NSUTF8StringEncoding] ;
+        NSData *prefix = [[NSString stringWithFormat:@"%@\0", _localName] dataUsingEncoding:NSUTF8StringEncoding] ;
         [dataToSend appendData:prefix] ;
-        [dataToSend appendData:[NSData dataWithBytes:&j length:1]] ;
     } else if (msgid == MSGID_LEGACY) {
         char j = 'x' ; // we're not bothering with raw mode until/unless someone complains... and maybe not even then
         [dataToSend appendData:[NSData dataWithBytes:&j length:1]] ;
@@ -282,7 +280,7 @@ static const char *portError(SInt32 code) {
             NSData* data = [NSJSONSerialization dataWithJSONObject:_arguments options:(NSJSONWritingOptions)0 error:&error];
             if (!error && data) {
                 NSString* str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                registration = [NSString stringWithFormat:@"%@:%@:%@", _localName, _console, str] ;
+                registration = [NSString stringWithFormat:@"%@\0%@\0%@", _localName, _console, str] ;
             } else {
                 fprintf(stderr, "unable to serialize arguments for registration: %s\n", error.localizedDescription.UTF8String);
             }

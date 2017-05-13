@@ -259,7 +259,7 @@ module.__defaultHandler = function(self, msgID, msg)
         -- the msgid.  We send back a version string instead
         return "version:2.0a"
     elseif msgID == MSG_ID.REGISTER then      -- registering a new instance
-        local instanceID, console, arguments = msg:match("^([%w-]+):(%w+):(.*)$")
+        local instanceID, console, arguments = msg:match("^([%w-]+)\0(%w+)\0(.*)$")
         if not instanceID then instanceID, console, arguments = msg, "none", nil end
         local scriptArguments = nil
         if arguments then
