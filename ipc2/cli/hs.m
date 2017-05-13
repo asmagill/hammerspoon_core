@@ -5,6 +5,11 @@
 // * support #! /path/to/hs (if last arg is a file, assume -f?) is there another way to tell?
 //   Document (man page, printUsage, HS docs)
 //   Decide on legacy mode support... and legacy auto-detection?
+//   Add -q to suppress `print` in the cli instance
+
+//   Prompt for launch Hammerspoon?
+//     How do we wait until it's actually running? Since the only check we really have is whether the module is loaded or not
+//   flag to suppress prompt?
 
 @import Foundation ;
 @import CoreFoundation ;
@@ -577,7 +582,7 @@ int main()
                     break ;
                 }
 
-                add_history(input);
+                if (*input) add_history(input); // don't save empty lines
 
                 if (core.exitCode == EX_OK) [core executeCommand:[NSString stringWithCString:input encoding:NSUTF8StringEncoding]] ;
 
