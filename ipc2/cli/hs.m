@@ -19,10 +19,14 @@ static CFTimeInterval defaultTimeout   = 4.0 ;
 #define MSGID_REGISTER   100
 #define MSGID_UNREGISTER 200
 
+#define MSGID_LEGACYCHK  900
+#define MSGID_LEGACY     0    // because it's the only one that version ever sent/used
+#define MSGID_COMMAND    500
+
 #define MSGID_ERROR   -1
-#define MSGID_OUTPUT   0
-#define MSGID_RETURN   1
-#define MSGID_CONSOLE  2
+#define MSGID_OUTPUT   1
+#define MSGID_RETURN   2
+#define MSGID_CONSOLE  3
 
 @interface HSClient : NSThread
 @property CFMessagePortRef localPort ;
@@ -42,8 +46,10 @@ static CFTimeInterval defaultTimeout   = 4.0 ;
 @property NSArray          *arguments ;
 
 @property BOOL             useColors ;
-
+@property BOOL             autoReconnect ;
 @property int              exitCode ;
+
+- (BOOL)registerWithRemote ;
 @end
 
 static CFDataRef localPortCallback(__unused CFMessagePortRef local, SInt32 msgid, CFDataRef data, void *info) {
@@ -92,29 +98,34 @@ static const char *portError(SInt32 code) {
 
 @implementation HSClient
 
-- (instancetype)initWithRemote:(NSString *)remoteName inLegacyMode:(BOOL)legacyMode inColor:(BOOL)inColor {
+- (instancetype)initWithRemote:(NSString *)remoteName inColor:(BOOL)inColor {
     self = [super init] ;
     if (self) {
-        _remotePort  = NULL ;
-        _localPort   = NULL ;
-        _remoteName  = remoteName ;
-        _localName   = legacyMode ? nil : [[NSUUID UUID] UUIDString] ;
+        _remotePort    = NULL ;
+        _localPort     = NULL ;
+        _remoteName    = remoteName ;
+        _localName     = [[NSUUID UUID] UUIDString] ;
 
-        _useColors   = inColor ;
-        [self updateColorStrings] ;
+        _useColors     = inColor ; [self updateColorStrings] ;
 
-        _arguments   = nil ;
-        _sendTimeout = 4.0 ;
-        _recvTimeout = 4.0 ;
-        _exitCode    = EX_TEMPFAIL ; // until the thread is actually ready
-        _console     = @"none" ;
+        _arguments     = nil ;
+        _sendTimeout   = 4.0 ;
+        _recvTimeout   = 4.0 ;
+        _exitCode      = EX_TEMPFAIL ; // until the thread is actually ready
+        _console       = @"none" ;
+        _autoReconnect = NO ;
     }
     return self ;
 }
 
 - (void)dealloc {
-    if (_localPort)  CFRelease(_localPort) ;
-    if (_remotePort) CFRelease(_remotePort) ;
+    if (_localPort) {
+        CFMessagePortInvalidate(_localPort) ;
+        CFRelease(_localPort) ;
+    }
+    if (_remotePort) {
+        CFRelease(_remotePort) ;
+    }
 }
 
 - (void)main {
@@ -126,8 +137,10 @@ static const char *portError(SInt32 code) {
             [self cancel] ;
             return ;
         }
-
-        if (_localName) {
+        NSString *answer = [[NSString alloc] initWithData:[self sendToRemote:@"1 + 1" msgID:MSGID_LEGACYCHK wantResponse:YES error:nil]
+                                                 encoding:NSUTF8StringEncoding] ;
+//         printf("'%s'\n", answer.UTF8String) ;
+        if ([answer hasPrefix:@"+version:"]) {
             CFMessagePortContext ctx = { 0, (__bridge void *)self, NULL, NULL, NULL } ;
             Boolean error = false ;
             _localPort = CFMessagePortCreateLocal(NULL, (__bridge CFStringRef)_localName, localPortCallback, &ctx, &error) ;
@@ -155,19 +168,41 @@ static const char *portError(SInt32 code) {
         if ([self registerWithRemote]) {
             BOOL keepRunning = YES ;
             _exitCode = EX_OK ;
-            while(keepRunning && ([[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantFuture]])) {
+            while(keepRunning && ([[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:2]])) {
+                if (!CFMessagePortIsValid(_remotePort) && _autoReconnect) {
+                    fprintf(stderr, "Message port has become invalid.  Attempting to re-establish.\n");
+                    CFMessagePortRef newPort = NULL ;
+                    NSUInteger count = 0 ;
+                    while (!newPort && count < 5) {
+                        sleep(2) ;
+                        newPort = CFMessagePortCreateRemote(NULL, (__bridge CFStringRef)_remoteName) ;
+                        if (newPort) {
+                            CFRelease(_remotePort) ;
+                            _remotePort = newPort ;
+                            if ([self registerWithRemote]) fprintf(stderr, "Re-established.\n") ;
+
+                        } else {
+                            count++ ;
+                        }
+                    }
+                    if (!newPort) {
+                        fprintf(stderr, "error: can't access Hammerspoon; is it running?\n");
+                        _exitCode = EX_UNAVAILABLE ;
+                        [self cancel] ;
+                    }
+                }
                 if (_exitCode != EX_OK)  {
                     keepRunning = NO ;
                 } else {
                     keepRunning = ![self isCancelled] ;
                 }
             }
+            [self unregisterWithRemote] ;
         } else {
             _exitCode = EX_UNAVAILABLE ;
             [self cancel] ;
             return ;
         }
-        [self unregisterWithRemote] ;
     };
 }
 
@@ -197,11 +232,14 @@ static const char *portError(SInt32 code) {
 
 - (NSData *)sendToRemote:(id)data msgID:(SInt32)msgid wantResponse:(BOOL)wantResponse error:(NSError * __autoreleasing *)error {
     NSMutableData *dataToSend = [NSMutableData data] ;
-    if (msgid < MSGID_REGISTER) {
+    if (msgid == MSGID_COMMAND) {
         // prepend our UUID so the receiving callback knows which instance to communicate with
         UInt8 j= 0x00;
         NSData *prefix = [_localName dataUsingEncoding:NSUTF8StringEncoding] ;
         [dataToSend appendData:prefix] ;
+        [dataToSend appendData:[NSData dataWithBytes:&j length:1]] ;
+    } else if (msgid == MSGID_LEGACY) {
+        char j = 'x' ; // we're not bothering with raw mode until/unless someone complains... and maybe not even then
         [dataToSend appendData:[NSData dataWithBytes:&j length:1]] ;
     }
     if (data) {
@@ -274,14 +312,29 @@ static const char *portError(SInt32 code) {
 
 - (BOOL)executeCommand:(id)command {
     NSError *error ;
-    NSData *response = [self sendToRemote:command msgID:0 wantResponse:YES error:&error];
+    NSData *response = [self sendToRemote:command msgID:(_localPort ? MSGID_COMMAND : MSGID_LEGACY) wantResponse:YES error:&error];
     if (error) {
         fprintf(stderr, "error communicating with Hammerspoon: %s\n", portError((SInt32)error.code));
         _exitCode = EX_UNAVAILABLE ;
         return NO ;
     } else {
-        NSString *answer = [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding] ;
-        return [answer isEqualToString:@"+ok"] ;
+        if (_localPort) {
+            NSString *answer = [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding] ;
+            return [answer isEqualToString:@"+ok"] ;
+        } else {
+            // LEGACY OUTPUT HERE
+            NSUInteger maxSize = response.length ;
+            char  *responseCString = malloc((size_t)maxSize) ;
+            [response getBytes:responseCString length:maxSize] ;
+
+            fprintf(stdout, "%s", _colorOutput.UTF8String) ;
+            fwrite(responseCString, 1, (size_t)maxSize, stdout);
+            fprintf(stdout, "%s", _colorOutput.UTF8String) ;
+            fprintf(stdout, "\n") ;
+
+            free(responseCString) ;
+            return YES ;
+        }
     }
 }
 
@@ -295,7 +348,6 @@ static void printUsage(const char *cmd) {
     printf("    -C         Enable print mirroring from the Hammerspoon Console to this instance. Disables -P. Unlike modifying `_cli.console` within an instance, this setting will persist if the instance has to reconnect.\n") ;
     printf("    -h         Displays this help and exits.\n") ;
     printf("    -i         Enable interactive mode. Default unless -c argument is present. In interactive mode, if the connection to Hammerspoon becomes invalid, usually because Hammerspoon has been reloaded, this tool will attempt to reconnect when submitting the user input before exiting with an error.\n") ;
-    printf("    -L         Force legacy mode.  Shouldn't be required unless you are using a custom remote port setup.\n") ;
     printf("    -m name    Specify the remote port to connect to. Defaults to %s.\n", defaultPortName.UTF8String) ;
     printf("    -n         Disable colorized output. Automatic if stdin is a pipe, output is redirected, or as specified below.\n") ;
     printf("    -N         Force colorized output even when it would normally not be enabled.\n") ;
@@ -321,7 +373,6 @@ int main()
         BOOL           readFile    = NO ;
         BOOL           interactive = !readStdIn ;
         BOOL           useColors   = interactive && (BOOL)isatty(STDOUT_FILENO) ;
-        BOOL           legacyMode  = NO ;
         NSString       *portName   = defaultPortName ;
         NSString       *console    = @"none" ;
         NSString       *fileName   = nil ;
@@ -353,8 +404,6 @@ int main()
             } else if ([args[idx] isEqualToString:@"-N"]) {
                 useColors  = YES ;
                 seenColors = YES ;
-            } else if ([args[idx] isEqualToString:@"-L"]) {
-                legacyMode = YES ;
             } else if ([args[idx] isEqualToString:@"-C"]) {
                 console = @"mirror" ;
             } else if ([args[idx] isEqualToString:@"-P"]) {
@@ -414,7 +463,6 @@ int main()
         fprintf(stderr, "DEBUG\treadStdIn:   %s\n", (readStdIn   ? "Yes" : "No")) ;
         fprintf(stderr, "DEBUG\tinteractive: %s\n", (interactive ? "Yes" : "No")) ;
         fprintf(stderr, "DEBUG\tuseColors:   %s\n", (useColors   ? "Yes" : "No")) ;
-        fprintf(stderr, "DEBUG\tlegacyMode:  %s\n", (legacyMode  ? "Yes" : "No")) ;
         fprintf(stderr, "DEBUG\tportName:    %s\n", portName.UTF8String) ;
         fprintf(stderr, "DEBUG\ttimeout:     %f\n", timeout) ;
         fprintf(stderr, "DEBUG\texplicit commands:\n") ;
@@ -423,12 +471,15 @@ int main()
         }
 #endif
 
-        HSClient    *core    = [[HSClient alloc] initWithRemote:portName
-                                                   inLegacyMode:legacyMode
-                                                        inColor:useColors] ;
+        HSClient    *core    = [[HSClient alloc] initWithRemote:portName inColor:useColors] ;
+
+        // during stdin, file, and preRun commands, we want a disconnect to error out
+        core.autoReconnect = NO ;
+
         // may split them up later...
         core.sendTimeout = timeout ;
         core.recvTimeout = timeout ;
+
         core.arguments   = args ;
         core.console     = console ;
 
@@ -442,6 +493,9 @@ int main()
         printf("DEBUG\tWaiting for background thread to start\n") ;
 #endif
         while (core.exitCode == EX_TEMPFAIL) ;
+
+        if (core.exitCode == EX_OK && !core.localPort)
+            fprintf(stderr, "%s-- Legacy mode enabled --%s\n", core.colorBanner.UTF8String, core.colorReset.UTF8String);
 
         if (core.exitCode == EX_OK && preRun) {
             for (NSString *command in preRun) {
@@ -511,7 +565,11 @@ int main()
         }
 
         if (core.exitCode == EX_OK && interactive) {
+            // but in interactive mode, attempt to reconnect on remote port invalidation
+            core.autoReconnect = YES ;
+
             printf("%sHammerspoon interactive prompt.%s\n", core.colorBanner.UTF8String, core.colorReset.UTF8String);
+
             while (core.exitCode == EX_OK) {
                 printf("\n%s", core.colorInput.UTF8String);
                 char* input = readline("> ");
@@ -523,19 +581,6 @@ int main()
 
                 add_history(input);
 
-                if (!CFMessagePortIsValid(core.remotePort)) {
-                    fprintf(stderr, "Message port has become invalid.  Attempting to re-establish.\n");
-                    CFMessagePortRef newPort = CFMessagePortCreateRemote(kCFAllocatorDefault, (__bridge CFStringRef)portName) ;
-                    if (newPort) {
-                        CFRelease(core.remotePort) ;
-                        core.remotePort = newPort ;
-                        [core registerWithRemote] ;
-                    } else {
-                        fprintf(stderr, "error: can't access Hammerspoon; is it running?\n");
-                        core.exitCode = EX_UNAVAILABLE ;
-                    }
-                }
-
                 if (core.exitCode == EX_OK) [core executeCommand:[NSString stringWithCString:input encoding:NSUTF8StringEncoding]] ;
 
                 if (input) free(input) ;
@@ -545,7 +590,8 @@ int main()
         if (core.remotePort && !core.cancelled) {
             [core cancel] ;
             // cancel does not break the runloop, so poke it to wake it up
-            [core performSelector:@selector(poke:) onThread:core withObject:nil waitUntilDone:YES] ;
+            // we wait when we have a local port to unregister; in legacy mode we don't need to
+            [core performSelector:@selector(poke:) onThread:core withObject:nil waitUntilDone:(core.localPort ? YES : NO)] ;
         }
         exitCode = core.exitCode ;
         core = nil ;

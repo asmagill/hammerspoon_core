@@ -27,10 +27,15 @@ local json     = require("hs.json")
 local MSG_ID = {
     REGISTER   = 100,
     UNREGISTER = 200,
+
+    LEGACYCHK  = 900,
+    LEGACY     =  0,    -- because it's the only one that version ever sent/used
+    COMMAND    = 500,
+
     ERROR      = -1,
-    OUTPUT     =  0,
-    RETURN     =  1,
-    CONSOLE    =  2,
+    OUTPUT     =  1,
+    RETURN     =  2,
+    CONSOLE    =  3,
 }
 
 local originalPrint = print
@@ -248,9 +253,12 @@ module.__registeredInstanceCleanup = timer.doEvery(60, function()
     end
 end)
 
-
-module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
-    if msgID == MSG_ID.REGISTER then      -- registering a new instance
+module.__defaultHandler = function(self, msgID, msg)
+    if msgID == MSG_ID.LEGACYCHK then
+        -- the message sent will be a mathematical equation; the original ipc will evaluate it because it ignored
+        -- the msgid.  We send back a version string instead
+        return "version:2.0a"
+    elseif msgID == MSG_ID.REGISTER then      -- registering a new instance
         local instanceID, console, arguments = msg:match("^([%w-]+):(%w+):(.*)$")
         if not instanceID then instanceID, console, arguments = msg, "none", nil end
         local scriptArguments = nil
@@ -302,7 +310,7 @@ module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
         log.df("unregistering %s", msg)
         module.__registeredCLIInstances[msg]._cli.remote:delete()
         module.__registeredCLIInstances[msg] = nil
-    else
+    elseif msgID == MSG_ID.COMMAND then
         local instanceID, code = msg:match("^([%w-]*)\0(.*)$")
 --        print(msg, instanceID, code)
         if instanceID then
@@ -321,8 +329,14 @@ module.__default = module.localPort("hsCommandLine", function(self, msgID, msg)
         else
             log.ef("unexpected message received: %s", msg)
         end
+    elseif msgID == MSG_ID.LEGACY then
+    -- gotta think about this
+    else
+        log.ef("unexpected message id received: %d, %s", msgID, msg)
     end
-end)
+end
+
+module.__default = module.localPort("hsCommandLine", module.__defaultHandler)
 
 -- Return Module Object --------------------------------------------------
 
