@@ -366,9 +366,15 @@ static void printUsage(const char *cmd) {
     printf("\n") ;
 }
 
+void sigint_handler(int signo) {
+    printf("\033[0m");
+    exit(4);
+}
+
 int main()
 {
     int exitCode = 0 ;
+    signal(SIGINT, sigint_handler);
 
     @autoreleasepool {
 
