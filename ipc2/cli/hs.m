@@ -3,13 +3,21 @@
 // * allow arbitrary binary from stdin (i.e. don't choke on null in string
 // * allow read from file via -f: instead, if arg starts with ./, /, or ~ treat as file and stop parsing args
 // * support #! /path/to/hs (if last arg is a file, assume -f?) is there another way to tell?
+// * Add -q to suppress `print` in the cli instance
+// * optionally save history
+// + Decide on legacy mode support... and legacy auto-detection?
+//   auto-complete?
+//   different color for returned values? Currently uses output color
+
 //   Document (man page, printUsage, HS docs)
-//   Decide on legacy mode support... and legacy auto-detection?
-//   Add -q to suppress `print` in the cli instance
+//   verify existing/add new functions to init.lua for tweaking defaults this tool uses
 
 //   Prompt for launch Hammerspoon?
 //     How do we wait until it's actually running? Since the only check we really have is whether the module is loaded or not
 //   flag to suppress prompt?
+
+//   Add NSTimer to secondary runloop -- it doesn't persist when in legacy mode because nothing is attached to it... this will
+//      fix need for trinary op in performSelector at end and auto-reconnect when in legacy mode
 
 @import Foundation ;
 @import CoreFoundation ;
@@ -39,7 +47,6 @@ static const CFStringRef hammerspoonBundle = CFSTR("org.hammerspoon.Hammerspoon"
 @property CFMessagePortRef remotePort ;
 @property NSString         *remoteName ;
 @property NSString         *localName ;
-@property NSString         *console ;
 
 @property CFTimeInterval   sendTimeout ;
 @property CFTimeInterval   recvTimeout ;
@@ -118,7 +125,6 @@ static const char *portError(SInt32 code) {
         _sendTimeout   = 4.0 ;
         _recvTimeout   = 4.0 ;
         _exitCode      = EX_TEMPFAIL ; // until the thread is actually ready
-        _console       = @"none" ;
         _autoReconnect = NO ;
     }
     return self ;
@@ -286,7 +292,7 @@ static const char *portError(SInt32 code) {
             NSData* data = [NSJSONSerialization dataWithJSONObject:_arguments options:(NSJSONWritingOptions)0 error:&error];
             if (!error && data) {
                 NSString* str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-                registration = [NSString stringWithFormat:@"%@\0%@\0%@", _localName, _console, str] ;
+                registration = [NSString stringWithFormat:@"%@\0%@", _localName, str] ;
             } else {
                 fprintf(stderr, "unable to serialize arguments for registration: %s\n", error.localizedDescription.UTF8String);
             }
@@ -349,13 +355,14 @@ static void printUsage(const char *cmd) {
     printf("usage: %s [arguments] [file]\n", cmd) ;
     printf("\n") ;
     printf("    -c cmd     Specifies a Hammerspoon command to execute. May be specified more than once and commands will be executed in the order they appear. Disables colorized output unless -N is present. Disables interactive mode unless -i is present. If -i is present or if stdin is a pipe, these commands will be executed first.\n") ;
-    printf("    -C         Enable print mirroring from the Hammerspoon Console to this instance. Disables -P. Unlike modifying `_cli.console` within an instance, this setting will persist if the instance has to reconnect.\n") ;
+    printf("    -C         Enable print cloning from the Hammerspoon Console to this instance. Disables -P. Unlike modifying `_cli.console` within an instance, this setting will persist if the instance has to reconnect.\n") ;
     printf("    -h         Displays this help and exits.\n") ;
     printf("    -i         Enable interactive mode. Default unless -c argument is present. In interactive mode, if the connection to Hammerspoon becomes invalid, usually because Hammerspoon has been reloaded, this tool will attempt to reconnect when submitting the user input before exiting with an error.\n") ;
     printf("    -m name    Specify the remote port to connect to. Defaults to %s.\n", defaultPortName.UTF8String) ;
     printf("    -n         Disable colorized output. Automatic if stdin is a pipe, output is redirected, or as specified below.\n") ;
     printf("    -N         Force colorized output even when it would normally not be enabled.\n") ;
     printf("    -P         Enable print mirroring from this instance to the Hammerspoon Console. Disables -C. Unlike modifying `_cli.console` within an instance, this setting will persist if the instance has to reconnect.\n") ;
+    printf("    -q         Enable quiet mode.  In quiet mode, the only output to the instance will be errors and the final result of any command executed.\n") ;
     printf("    -s         Read stdin for the contents to execute and exit.  Included for backwards compatibility as this tool now detects when stdin is a pipe automatically. Disables colorized output unless -N is present. Disables interactive mode.\n") ;
     printf("    -t sec     Specifies the send and receive timeouts in seconds.  Defaults to %f seconds.\n", defaultTimeout) ;
     printf("    --         Ignore all arguments following, allowing custom arguments to be passed into the cli instance.\n") ;
@@ -385,7 +392,6 @@ int main()
         BOOL           interactive = !readStdIn ;
         BOOL           useColors   = interactive && (BOOL)isatty(STDOUT_FILENO) ;
         NSString       *portName   = defaultPortName ;
-        NSString       *console    = @"none" ;
         NSString       *fileName   = nil ;
 
         CFTimeInterval timeout     = defaultTimeout ;
@@ -416,9 +422,11 @@ int main()
                 useColors  = YES ;
                 seenColors = YES ;
             } else if ([args[idx] isEqualToString:@"-C"]) {
-                console = @"mirror" ;
+                // silently ignore -- it's parsed in the handler
             } else if ([args[idx] isEqualToString:@"-P"]) {
-                console = @"legacy" ;
+                // silently ignore -- it's parsed in the handler
+            } else if ([args[idx] isEqualToString:@"-q"]) {
+                // silently ignore -- it's parsed in the handler
             } else if ([args[idx] isEqualToString:@"-m"]) {
                 if ((idx + 1) < args.count) {
                     idx++ ;
@@ -492,7 +500,6 @@ int main()
         core.recvTimeout = timeout ;
 
         core.arguments   = args ;
-        core.console     = console ;
 
 #ifdef DEBUG
         fprintf(stderr, "DEBUG\tCLI local port %s\n", core.localName.UTF8String) ;

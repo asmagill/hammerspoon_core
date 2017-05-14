@@ -259,44 +259,47 @@ module.__defaultHandler = function(self, msgID, msg)
         -- the msgid.  We send back a version string instead
         return "version:2.0a"
     elseif msgID == MSG_ID.REGISTER then      -- registering a new instance
-        local instanceID, console, arguments = msg:match("^([%w-]+)\0(%w+)\0(.*)$")
-        if not instanceID then instanceID, console, arguments = msg, "none", nil end
+        local instanceID, arguments = msg:match("^([%w-]+)\0(.*)$")
+        if not instanceID then instanceID, arguments = msg, nil end
         local scriptArguments = nil
+        local quietMode       = false
+        local console         = "none"
         if arguments then
             arguments = json.decode(arguments)
             scriptArguments = {}
             local seenSeparator = false
             for i, v in ipairs(arguments) do
                 if i > 1 and (v == "--" or v:match("^~") or v:match("^%.?/")) then seenSeparator = true end
-                if seenSeparator then table.insert(scriptArguments, v) end
+                if seenSeparator then
+                    table.insert(scriptArguments, v)
+                else
+                    if v == "-q" then quietMode = true end
+                    if v == "-C" then console = "mirror" end
+                    if v == "-P" then console = "legacy" end
+                end
             end
             if #scriptArguments == 0 then scriptArguments = arguments end
         end
         log.df("registering %s", instanceID)
 
-        if console == "legacy" then
-            console = nil
-        elseif console == "mirror" then
-            console = true
-        else
-            console = false
-        end
-
         module.__registeredCLIInstances[instanceID] = setmetatable({
             _cli = {
-                remote  = module.remotePort(instanceID),
-                console = console,
-                _args   = arguments,
-                args    = scriptArguments,
+                remote    = module.remotePort(instanceID),
+                console   = console,
+                _args     = arguments,
+                args      = scriptArguments,
+                quietMode = quietMode,
             },
             print  = function(...)
+                local parent = module.__registeredCLIInstances[instanceID]._cli
+                if parent.quietMode then return end
                 local things = table.pack(...)
                 local stdout = (things.n > 0) and tostring(things[1]) or ""
                 for i = 2, things.n do
                     stdout = stdout .. "\t" .. tostring(things[i])
                 end
                 module.__registeredCLIInstances[instanceID]._cli.remote:sendMessage(stdout, MSG_ID.OUTPUT)
-                if type(module.__registeredCLIInstances[instanceID]._cli.console) == "nil" then
+                if type(parent.console) == "nil" then
                     originalPrint(...)
                 end
             end,
