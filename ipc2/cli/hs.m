@@ -18,6 +18,7 @@
 
 static NSString       *defaultPortName = @"hsCommandLine" ;
 static CFTimeInterval defaultTimeout   = 4.0 ;
+static const CFStringRef hammerspoonBundle = CFSTR("org.hammerspoon.Hammerspoon") ;
 
 // #define DEBUG
 
@@ -217,10 +218,10 @@ static const char *portError(SInt32 code) {
 
 - (void)updateColorStrings {
     if (_useColors) {
-        CFStringRef initial = CFPreferencesCopyAppValue(CFSTR("ipc2.cli.color_initial"), CFSTR("org.hammerspoon.Hammerspoon")) ;
-        CFStringRef input   = CFPreferencesCopyAppValue(CFSTR("ipc2.cli.color_input"),   CFSTR("org.hammerspoon.Hammerspoon")) ;
-        CFStringRef output  = CFPreferencesCopyAppValue(CFSTR("ipc2.cli.color_output"),  CFSTR("org.hammerspoon.Hammerspoon")) ;
-        CFStringRef error   = CFPreferencesCopyAppValue(CFSTR("ipc2.cli.color_error"),   CFSTR("org.hammerspoon.Hammerspoon")) ;
+        CFStringRef initial = CFPreferencesCopyAppValue(CFSTR("ipc2.cli.color_initial"), hammerspoonBundle) ;
+        CFStringRef input   = CFPreferencesCopyAppValue(CFSTR("ipc2.cli.color_input"),   hammerspoonBundle) ;
+        CFStringRef output  = CFPreferencesCopyAppValue(CFSTR("ipc2.cli.color_output"),  hammerspoonBundle) ;
+        CFStringRef error   = CFPreferencesCopyAppValue(CFSTR("ipc2.cli.color_error"),   hammerspoonBundle) ;
         _colorBanner = initial ? (__bridge_transfer NSString *)initial : @"\033[35m" ;
         _colorInput  = input   ? (__bridge_transfer NSString *)input   : @"\033[33m" ;
         _colorOutput = output  ? (__bridge_transfer NSString *)output  : @"\033[36m" ;
@@ -366,7 +367,8 @@ static void printUsage(const char *cmd) {
     printf("\n") ;
 }
 
-void sigint_handler(int signo) {
+void sigint_handler(__unused int signo) __attribute__((__noreturn__)) ;
+void sigint_handler(__unused int signo) {
     printf("\033[0m");
     exit(4);
 }
@@ -577,6 +579,20 @@ int main()
             // but in interactive mode, attempt to reconnect on remote port invalidation
             core.autoReconnect = YES ;
 
+
+            CFNumberRef CFsaveHistory = CFPreferencesCopyAppValue(CFSTR("ipc2.cli.saveHistory"), hammerspoonBundle) ;
+            BOOL saveHistory = CFsaveHistory ? [(__bridge_transfer NSNumber *)CFsaveHistory boolValue] : NO ;
+
+            CFNumberRef CFhistoryLimit = CFPreferencesCopyAppValue(CFSTR("ipc2.cli.historyLimit"), hammerspoonBundle) ;
+            int  historyLimit = CFhistoryLimit ? [(__bridge_transfer NSNumber *)CFhistoryLimit intValue] : 1000 ;
+
+            CFStringRef CFhsDir   = CFPreferencesCopyAppValue(CFSTR("MJConfigFile"), hammerspoonBundle) ;
+            NSString    *confFile = CFhsDir ? (__bridge_transfer NSString *)CFhsDir : @"~/.hammerspoon/init.lua" ;
+            confFile = [[confFile substringToIndex:(confFile.length - 8)] stringByAppendingFormat:@".cli.history"] ;
+            confFile = confFile.stringByExpandingTildeInPath ;
+
+            if (saveHistory) read_history(confFile.UTF8String) ;
+
             printf("%sHammerspoon interactive prompt.%s\n", core.colorBanner.UTF8String, core.colorReset.UTF8String);
 
             while (core.exitCode == EX_OK) {
@@ -594,6 +610,10 @@ int main()
 
                 if (input) free(input) ;
             }
+
+            if (saveHistory) write_history(confFile.UTF8String) ;
+            if (saveHistory) history_truncate_file (confFile.UTF8String, historyLimit) ;
+
         }
 
         if (core.remotePort && !core.cancelled) {
