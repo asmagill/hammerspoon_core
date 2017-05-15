@@ -6,7 +6,7 @@
 // * Add -q to suppress `print` in the cli instance
 // * optionally save history
 // + Decide on legacy mode support... and legacy auto-detection?
-//   auto-complete?
+// + auto-complete?
 //   different color for returned values? Currently uses output color
 
 //   Document (man page, printUsage, HS docs)
@@ -24,9 +24,13 @@
 @import Darwin.sysexits ;
 #include <editline/readline.h>
 
-static NSString       *defaultPortName = @"hsCommandLine" ;
-static CFTimeInterval defaultTimeout   = 4.0 ;
+static NSString          *defaultPortName = @"hsCommandLine" ;
+static CFTimeInterval    defaultTimeout   = 4.0 ;
 static const CFStringRef hammerspoonBundle = CFSTR("org.hammerspoon.Hammerspoon") ;
+
+@class HSClient ;
+
+static HSClient          *core = nil ;
 
 // #define DEBUG
 
@@ -34,13 +38,15 @@ static const CFStringRef hammerspoonBundle = CFSTR("org.hammerspoon.Hammerspoon"
 #define MSGID_UNREGISTER 200
 
 #define MSGID_LEGACYCHK  900
-#define MSGID_LEGACY     0    // because it's the only one that version ever sent/used
 #define MSGID_COMMAND    500
+#define MSGID_QUERY      501
 
-#define MSGID_ERROR   -1
-#define MSGID_OUTPUT   1
-#define MSGID_RETURN   2
-#define MSGID_CONSOLE  3
+#define MSGID_LEGACY      0    // because it's the only one that version ever sent/used
+
+#define MSGID_ERROR      -1
+#define MSGID_OUTPUT      1
+#define MSGID_RETURN      2
+#define MSGID_CONSOLE     3
 
 @interface HSClient : NSThread
 @property CFMessagePortRef localPort ;
@@ -71,7 +77,7 @@ static CFDataRef localPortCallback(__unused CFMessagePortRef local, SInt32 msgid
     CFIndex maxSize = CFDataGetLength(data) ;
     char  *responseCString = malloc((size_t)maxSize) ;
 
-    CFDataGetBytes(data, CFRangeMake(0, maxSize), (UInt8 *)responseCString );
+    CFDataGetBytes(data, CFRangeMake(0, maxSize), (UInt8 *)responseCString ) ;
 
     BOOL isStdOut = (msgid < 0) ? NO : YES ;
     NSString *outputColor ;
@@ -83,7 +89,7 @@ static CFDataRef localPortCallback(__unused CFMessagePortRef local, SInt32 msgid
         default:            outputColor = self.colorError ;
     }
     fprintf((isStdOut ? stdout : stderr), "%s", outputColor.UTF8String) ;
-    fwrite(responseCString, 1, (size_t)maxSize, (isStdOut ? stdout : stderr));
+    fwrite(responseCString, 1, (size_t)maxSize, (isStdOut ? stdout : stderr)) ;
     fprintf((isStdOut ? stdout : stderr), "%s", self.colorReset.UTF8String) ;
     fprintf((isStdOut ? stdout : stderr), "\n") ;
 
@@ -94,11 +100,11 @@ static CFDataRef localPortCallback(__unused CFMessagePortRef local, SInt32 msgid
 
     free(responseCString) ;
 
-    return CFStringCreateExternalRepresentation(NULL, CFSTR("check"), kCFStringEncodingUTF8, 0); ;
+    return CFStringCreateExternalRepresentation(NULL, CFSTR("check"), kCFStringEncodingUTF8, 0) ; ;
 }
 
 static const char *portError(SInt32 code) {
-    const char* errstr = "unknown error";
+    const char* errstr = "unknown error" ;
     switch (code) {
         case kCFMessagePortSendTimeout:        errstr = "send timeout" ; break ;
         case kCFMessagePortReceiveTimeout:     errstr = "receive timeout" ; break ;
@@ -144,7 +150,7 @@ static const char *portError(SInt32 code) {
     @autoreleasepool {
         _remotePort = CFMessagePortCreateRemote(NULL, (__bridge CFStringRef)_remoteName) ;
         if (!_remotePort) {
-            fprintf(stderr, "error: can't access Hammerspoon message port %s; is it running with the ipc2 module loaded?\n", _remoteName.UTF8String);
+            fprintf(stderr, "error: can't access Hammerspoon message port %s; is it running with the ipc2 module loaded?\n", _remoteName.UTF8String) ;
             _exitCode = EX_UNAVAILABLE ;
             [self cancel] ;
             return ;
@@ -152,14 +158,15 @@ static const char *portError(SInt32 code) {
         NSString *answer = [[NSString alloc] initWithData:[self sendToRemote:@"1 + 1" msgID:MSGID_LEGACYCHK wantResponse:YES error:nil]
                                                  encoding:NSUTF8StringEncoding] ;
 //         printf("'%s'\n", answer.UTF8String) ;
-        if ([answer hasPrefix:@"+version:"]) {
+//         if ([answer hasPrefix:@"+version:"]) {
+        if ([answer hasPrefix:@"version:"]) {
             CFMessagePortContext ctx = { 0, (__bridge void *)self, NULL, NULL, NULL } ;
             Boolean error = false ;
             _localPort = CFMessagePortCreateLocal(NULL, (__bridge CFStringRef)_localName, localPortCallback, &ctx, &error) ;
 
             if (error) {
                 NSString *errorMsg = _localPort ? [NSString stringWithFormat:@"%@ port name already in use", _localName] : @"failed to create new local port" ;
-                fprintf(stderr, "error: %s\n", errorMsg.UTF8String);
+                fprintf(stderr, "error: %s\n", errorMsg.UTF8String) ;
                 _exitCode = EX_UNAVAILABLE ;
                 [self cancel] ;
                 return ;
@@ -167,10 +174,10 @@ static const char *portError(SInt32 code) {
 
             CFRunLoopSourceRef runLoop = CFMessagePortCreateRunLoopSource(NULL, _localPort, 0) ;
             if (runLoop) {
-                CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoop, kCFRunLoopCommonModes);
+                CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoop, kCFRunLoopCommonModes) ;
                 CFRelease(runLoop) ;
             } else {
-                fprintf(stderr, "unable to create runloop source for local port\n");
+                fprintf(stderr, "unable to create runloop source for local port\n") ;
                 _exitCode = EX_UNAVAILABLE ;
                 [self cancel] ;
                 return ;
@@ -182,7 +189,7 @@ static const char *portError(SInt32 code) {
             _exitCode = EX_OK ;
             while(keepRunning && ([[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:2]])) {
                 if (!CFMessagePortIsValid(_remotePort) && _autoReconnect) {
-                    fprintf(stderr, "Message port has become invalid.  Attempting to re-establish.\n");
+                    fprintf(stderr, "Message port has become invalid.  Attempting to re-establish.\n") ;
                     CFMessagePortRef newPort = NULL ;
                     NSUInteger count = 0 ;
                     while (!newPort && count < 5) {
@@ -198,7 +205,7 @@ static const char *portError(SInt32 code) {
                         }
                     }
                     if (!newPort) {
-                        fprintf(stderr, "error: can't access Hammerspoon; is it running?\n");
+                        fprintf(stderr, "error: can't access Hammerspoon; is it running?\n") ;
                         _exitCode = EX_UNAVAILABLE ;
                         [self cancel] ;
                     }
@@ -215,7 +222,7 @@ static const char *portError(SInt32 code) {
             [self cancel] ;
             return ;
         }
-    };
+    } ;
 }
 
 - (void)poke:(__unused id)obj {
@@ -244,11 +251,11 @@ static const char *portError(SInt32 code) {
 
 - (NSData *)sendToRemote:(id)data msgID:(SInt32)msgid wantResponse:(BOOL)wantResponse error:(NSError * __autoreleasing *)error {
     NSMutableData *dataToSend = [NSMutableData data] ;
-    if (msgid == MSGID_COMMAND) {
+    if (msgid == MSGID_COMMAND || (msgid == MSGID_QUERY && _localPort)) {
         // prepend our UUID so the receiving callback knows which instance to communicate with
         NSData *prefix = [[NSString stringWithFormat:@"%@\0", _localName] dataUsingEncoding:NSUTF8StringEncoding] ;
         [dataToSend appendData:prefix] ;
-    } else if (msgid == MSGID_LEGACY) {
+    } else if (msgid == MSGID_LEGACY || (msgid == MSGID_QUERY && !_localPort)) {
         char j = 'x' ; // we're not bothering with raw mode until/unless someone complains... and maybe not even then
         [dataToSend appendData:[NSData dataWithBytes:&j length:1]] ;
     }
@@ -257,7 +264,7 @@ static const char *portError(SInt32 code) {
         if (actualMessage) [dataToSend appendData:actualMessage] ;
     }
 
-    CFDataRef returnedData;
+    CFDataRef returnedData ;
     SInt32 code = CFMessagePortSendRequest(
                                               _remotePort,
                                               msgid,
@@ -272,7 +279,7 @@ static const char *portError(SInt32 code) {
         if (error) {
             *error = [NSError errorWithDomain:NSOSStatusErrorDomain code:code userInfo:nil] ;
         } else {
-            fprintf(stderr, "error sending to remote: %s\n", portError(code));
+            fprintf(stderr, "error sending to remote: %s\n", portError(code)) ;
         }
         return nil ;
     }
@@ -288,20 +295,20 @@ static const char *portError(SInt32 code) {
     if (_localPort) { // not needed for legacy mode
         NSString *registration = _localName ;
         if (_arguments) {
-            NSError* error;
-            NSData* data = [NSJSONSerialization dataWithJSONObject:_arguments options:(NSJSONWritingOptions)0 error:&error];
+            NSError* error ;
+            NSData* data = [NSJSONSerialization dataWithJSONObject:_arguments options:(NSJSONWritingOptions)0 error:&error] ;
             if (!error && data) {
-                NSString* str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+                NSString* str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ;
                 registration = [NSString stringWithFormat:@"%@\0%@", _localName, str] ;
             } else {
-                fprintf(stderr, "unable to serialize arguments for registration: %s\n", error.localizedDescription.UTF8String);
+                fprintf(stderr, "unable to serialize arguments for registration: %s\n", error.localizedDescription.UTF8String) ;
             }
         }
 
         NSError *error = nil ;
         [self sendToRemote:registration msgID:MSGID_REGISTER wantResponse:YES error:&error] ;
         if (error) {
-            fprintf(stderr, "error registering CLI instance with Hammerspoon: %s\n", portError((SInt32)error.code));
+            fprintf(stderr, "error registering CLI instance with Hammerspoon: %s\n", portError((SInt32)error.code)) ;
             return NO ;
         }
     }
@@ -313,7 +320,7 @@ static const char *portError(SInt32 code) {
         NSError *error = nil ;
         [self sendToRemote:_localName msgID:MSGID_UNREGISTER wantResponse:NO error:&error] ;
         if (error) {
-            fprintf(stderr, "error unregistering CLI instance with Hammerspoon: %s\n", portError((SInt32)error.code));
+            fprintf(stderr, "error unregistering CLI instance with Hammerspoon: %s\n", portError((SInt32)error.code)) ;
             return NO ;
         }
     }
@@ -322,15 +329,16 @@ static const char *portError(SInt32 code) {
 
 - (BOOL)executeCommand:(id)command {
     NSError *error ;
-    NSData *response = [self sendToRemote:command msgID:(_localPort ? MSGID_COMMAND : MSGID_LEGACY) wantResponse:YES error:&error];
+    NSData *response = [self sendToRemote:command msgID:(_localPort ? MSGID_COMMAND : MSGID_LEGACY) wantResponse:YES error:&error] ;
     if (error) {
-        fprintf(stderr, "error communicating with Hammerspoon: %s\n", portError((SInt32)error.code));
+        fprintf(stderr, "error communicating with Hammerspoon: %s\n", portError((SInt32)error.code)) ;
         _exitCode = EX_UNAVAILABLE ;
         return NO ;
     } else {
         if (_localPort) {
             NSString *answer = [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding] ;
-            return [answer isEqualToString:@"+ok"] ;
+//             return [answer isEqualToString:@"+ok"] ;
+            return [answer isEqualToString:@"ok"] ;
         } else {
             // LEGACY OUTPUT HERE
             NSUInteger maxSize = response.length ;
@@ -338,7 +346,7 @@ static const char *portError(SInt32 code) {
             [response getBytes:responseCString length:maxSize] ;
 
             fprintf(stdout, "%s", _colorOutput.UTF8String) ;
-            fwrite(responseCString, 1, (size_t)maxSize, stdout);
+            fwrite(responseCString, 1, (size_t)maxSize, stdout) ;
             fprintf(stdout, "%s", _colorOutput.UTF8String) ;
             fprintf(stdout, "\n") ;
 
@@ -349,6 +357,56 @@ static const char *portError(SInt32 code) {
 }
 
 @end
+
+static char * dupstr (char* s) {
+  char *r;
+
+  r = (char*) malloc ((strlen (s) + 1));
+  strcpy (r, s);
+  return (r);
+}
+
+static char *hs_completion_generator(const char* text, int state) {
+    static NSUInteger index  = 0 ;
+    static NSArray    *items = nil ;
+
+    if (!state) {
+        index = 0 ;
+        items = nil ;
+        NSError *error = nil ;
+        NSData  *results = [core sendToRemote:[NSString stringWithFormat:@"require(\"hs.json\").encode(hs.completionsForInputString(\"%s\"))", text] msgID:MSGID_QUERY wantResponse:YES error:&error] ;
+        if (error) {
+            fprintf(stderr, "error getting completion list: %s\n", portError((SInt32)error.code)) ;
+            return ((char *)NULL) ;
+        } else {
+            items = [NSJSONSerialization JSONObjectWithData:results options:NSJSONReadingAllowFragments error:&error] ;
+            if (error) {
+                items = nil ;
+                fprintf(stderr, "error interpreting completion results: %s (input == %s)\n", error.localizedDescription.UTF8String, [[NSString alloc] initWithData:results encoding:NSUTF8StringEncoding].UTF8String) ;
+                return ((char *)NULL) ;
+            } else if (![items isKindOfClass:[NSArray class]]) {
+                items = nil ;
+                fprintf(stderr, "invalid response for completion list: %s\n", items.description.UTF8String) ;
+                return ((char *)NULL) ;
+            }
+        }
+    }
+
+    if (items && index < items.count) {
+        NSString *answer = items[index] ;
+        index++ ;
+
+        return dupstr(answer.UTF8String) ;
+    } else {
+        return ((char *)NULL) ;
+    }
+}
+
+static char** hs_completion(const char * text , __unused int start,  __unused int end) {
+// we want our completion handler no matter where we are in the line
+    rl_attempted_completion_over   = 1 ;
+    return rl_completion_matches ((char*)text, &hs_completion_generator) ;
+}
 
 static void printUsage(const char *cmd) {
     printf("\n") ;
@@ -376,14 +434,14 @@ static void printUsage(const char *cmd) {
 
 void sigint_handler(__unused int signo) __attribute__((__noreturn__)) ;
 void sigint_handler(__unused int signo) {
-    printf("\033[0m");
-    exit(4);
+    printf("\033[0m") ;
+    exit(4) ;
 }
 
 int main()
 {
     int exitCode = 0 ;
-    signal(SIGINT, sigint_handler);
+    signal(SIGINT, sigint_handler) ;
 
     @autoreleasepool {
 
@@ -485,12 +543,12 @@ int main()
         fprintf(stderr, "DEBUG\tportName:    %s\n", portName.UTF8String) ;
         fprintf(stderr, "DEBUG\ttimeout:     %f\n", timeout) ;
         fprintf(stderr, "DEBUG\texplicit commands:\n") ;
-        for (NSUInteger i = 0; i < preRun.count ; i++) {
+        for (NSUInteger i = 0 ; i < preRun.count ; i++) {
             fprintf(stderr, "DEBUG\t%2lu. %s\n", i + 1, preRun[i].UTF8String) ;
         }
 #endif
 
-        HSClient    *core    = [[HSClient alloc] initWithRemote:portName inColor:useColors] ;
+        core = [[HSClient alloc] initWithRemote:portName inColor:useColors] ;
 
         // during stdin, file, and preRun commands, we want a disconnect to error out
         core.autoReconnect = NO ;
@@ -513,7 +571,7 @@ int main()
         while (core.exitCode == EX_TEMPFAIL) ;
 
         if (core.exitCode == EX_OK && !core.localPort)
-            fprintf(stderr, "%s-- Legacy mode enabled --%s\n", core.colorBanner.UTF8String, core.colorReset.UTF8String);
+            fprintf(stderr, "%s-- Legacy mode enabled --%s\n", core.colorBanner.UTF8String, core.colorReset.UTF8String) ;
 
         if (core.exitCode == EX_OK && preRun) {
             for (NSString *command in preRun) {
@@ -527,14 +585,14 @@ int main()
 
         if (core.exitCode == EX_OK && readStdIn) {
             NSMutableData *command = [[NSMutableData alloc] init] ;
-            char buffer[BUFSIZ];
+            char buffer[BUFSIZ] ;
             size_t readLength ;
             while((readLength = fread(buffer, 1, BUFSIZ, stdin)) > 0) {
                 [command appendBytes:buffer length:readLength] ;
             }
 
             if (ferror(stdin)) {
-                perror("error reading from stdin:");
+                perror("error reading from stdin:") ;
                 core.exitCode = EX_NOINPUT ;
             } else {
                 BOOL status = [core executeCommand:command] ;
@@ -548,14 +606,14 @@ int main()
             FILE *fp = fopen(fileName.UTF8String, "r") ;
             if (fp) {
                 NSMutableData *file = [[NSMutableData alloc] init] ;
-                char buffer[BUFSIZ];
+                char buffer[BUFSIZ] ;
                 size_t readLength ;
                 while((readLength = fread(buffer, 1, BUFSIZ, fp)) > 0) {
                     [file appendBytes:buffer length:readLength] ;
                 }
 
                 if (ferror(fp)) {
-                    perror("error reading from file:");
+                    perror("error reading from file:") ;
                     core.exitCode = EX_NOINPUT ;
                 } else {
                     char shebang[2] ;
@@ -577,7 +635,7 @@ int main()
                 }
                 fclose(fp) ;
             } else {
-                perror("error openning file:");
+                perror("error openning file:") ;
                 core.exitCode = EX_NOINPUT ;
             }
         }
@@ -600,18 +658,21 @@ int main()
 
             if (saveHistory) read_history(confFile.UTF8String) ;
 
-            printf("%sHammerspoon interactive prompt.%s\n", core.colorBanner.UTF8String, core.colorReset.UTF8String);
+            printf("%sHammerspoon interactive prompt.%s\n", core.colorBanner.UTF8String, core.colorReset.UTF8String) ;
+
+            rl_attempted_completion_function = hs_completion ;
+            rl_completion_append_character = '\0' ; // no space after completion
 
             while (core.exitCode == EX_OK) {
-                printf("\n%s", core.colorInput.UTF8String);
-                char* input = readline("> ");
-                printf("%s", core.colorReset.UTF8String);
+                printf("\n%s", core.colorInput.UTF8String) ;
+                char* input = readline("> ") ;
+                printf("%s", core.colorReset.UTF8String) ;
                 if (!input) { // ctrl-d or other issue with readline
                     printf("\n") ;
                     break ;
                 }
 
-                if (*input) add_history(input); // don't save empty lines
+                if (*input) add_history(input) ; // don't save empty lines
 
                 if (core.exitCode == EX_OK) [core executeCommand:[NSString stringWithCString:input encoding:NSUTF8StringEncoding]] ;
 
@@ -632,5 +693,5 @@ int main()
         exitCode = core.exitCode ;
         core = nil ;
     } ;
-    return(exitCode);
+    return(exitCode) ;
 }

@@ -31,8 +31,9 @@ static CFDataRef ipc2_callback(__unused CFMessagePortRef local, SInt32 msgid, CF
 
         luaL_tolstring(L, -1, NULL) ;                   // make sure it's a string
         [skin logDebug:[NSString stringWithFormat:@"%s", lua_tostring(L, -1)]] ;
-        NSData *flag = status ? [@"+" dataUsingEncoding:NSUTF8StringEncoding] : [@"-" dataUsingEncoding:NSUTF8StringEncoding] ;
-        NSMutableData *result = [[NSMutableData alloc] initWithData:flag] ;
+//         NSData *flag = status ? [@"+" dataUsingEncoding:NSUTF8StringEncoding] : [@"-" dataUsingEncoding:NSUTF8StringEncoding] ;
+//         NSMutableData *result = [[NSMutableData alloc] initWithData:flag] ;
+        NSMutableData *result = [[NSMutableData alloc] init] ;
         [result appendData:[skin toNSObjectAtIndex:-1 withOptions:LS_NSLuaStringAsDataOnly]] ;
         if (!status) {
             [skin logError:[NSString stringWithFormat:@"%s:callback - error during callback for %@: %s", USERDATA_TAG, (__bridge NSString *)CFMessagePortGetName(port.messagePort), lua_tostring(L, -2)]] ;

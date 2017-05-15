@@ -25,17 +25,19 @@ local json     = require("hs.json")
 -- private variables and methods -----------------------------------------
 
 local MSG_ID = {
-    REGISTER   = 100,
-    UNREGISTER = 200,
+    REGISTER   = 100,   -- register an instance with the v2 cli
+    UNREGISTER = 200,   -- unregister an instance with the v2 cli
 
-    LEGACYCHK  = 900,
-    LEGACY     =  0,    -- because it's the only one that version ever sent/used
-    COMMAND    = 500,
+    LEGACYCHK  = 900,   -- query to test if we are the v2 ipc or not (v1 will ignore the id and evaluate)
+    COMMAND    = 500,   -- a command from the user from a v2 cli
+    QUERY      = 501,   -- an internal query from the v2 cli
 
-    ERROR      = -1,
-    OUTPUT     =  1,
-    RETURN     =  2,
-    CONSOLE    =  3,
+    LEGACY     =  0,    -- v1 cli/ipc only used the 0 msgID
+
+    ERROR      = -1,    -- result was an error
+    OUTPUT     =  1,    -- print output
+    RETURN     =  2,    -- result
+    CONSOLE    =  3,    -- cloned console output
 }
 
 local originalPrint = print
@@ -313,7 +315,7 @@ module.__defaultHandler = function(self, msgID, msg)
         log.df("unregistering %s", msg)
         module.__registeredCLIInstances[msg]._cli.remote:delete()
         module.__registeredCLIInstances[msg] = nil
-    elseif msgID == MSG_ID.COMMAND then
+    elseif msgID == MSG_ID.COMMAND or msgID == MSG_ID.QUERY then
         local instanceID, code = msg:match("^([%w-]*)\0(.*)$")
 --        print(msg, instanceID, code)
         if instanceID then
@@ -327,8 +329,12 @@ module.__defaultHandler = function(self, msgID, msg)
                 str = str .. "\t" .. tostring(results[i])
             end
 
-            fnEnv._cli.remote:sendMessage(str, results[1] and MSG_ID.RETURN or MSG_ID.ERROR)
-            return results[1] and "ok" or "error"
+            if msgID == MSG_ID.COMMAND then
+                fnEnv._cli.remote:sendMessage(str, results[1] and MSG_ID.RETURN or MSG_ID.ERROR)
+                return results[1] and "ok" or "error"
+            else
+                return str
+            end
         else
             log.ef("unexpected message received: %s", msg)
         end
