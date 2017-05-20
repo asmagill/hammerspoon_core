@@ -1,23 +1,25 @@
-// TODO:
+// DONE:
 // * set console mode from cmd line and include in registration
 // * allow arbitrary binary from stdin (i.e. don't choke on null in string
 // * allow read from file via -f: instead, if arg starts with ./, /, or ~ treat as file and stop parsing args
 // * support #! /path/to/hs (if last arg is a file, assume -f?) is there another way to tell?
 // * Add -q to suppress `print` in the cli instance
 // * optionally save history
-// + Decide on legacy mode support... and legacy auto-detection?
-// + auto-complete?
-//   different color for returned values? Currently uses output color
+// * Decide on legacy mode support... and legacy auto-detection?
+// * auto-complete?
+// * Add NSTimer to secondary runloop -- it doesn't persist when in legacy mode because nothing is attached to it... this will
+//      fix need for trinary op in performSelector at end and auto-reconnect when in legacy mode
 
+// TODO:
 //   Document (man page, printUsage, HS docs)
 //   verify existing/add new functions to init.lua for tweaking defaults this tool uses
 
+// MAYBE:
+//   different color for returned values? Currently uses output color
 //   Prompt for launch Hammerspoon?
 //     How do we wait until it's actually running? Since the only check we really have is whether the module is loaded or not
 //   flag to suppress prompt?
 
-//   Add NSTimer to secondary runloop -- it doesn't persist when in legacy mode because nothing is attached to it... this will
-//      fix need for trinary op in performSelector at end and auto-reconnect when in legacy mode
 
 @import Foundation ;
 @import CoreFoundation ;
@@ -155,10 +157,11 @@ static const char *portError(SInt32 code) {
             [self cancel] ;
             return ;
         }
+        // legacy mode check. If the remotePort does not respond with a version string to this msgID, then it's not
+        // the official `hs.ipc2` handler so fall back to legacy mode -- i.e. we don't setup our own remotePort for
+        // asynchronous bidirectional communication
         NSString *answer = [[NSString alloc] initWithData:[self sendToRemote:@"1 + 1" msgID:MSGID_LEGACYCHK wantResponse:YES error:nil]
                                                  encoding:NSUTF8StringEncoding] ;
-//         printf("'%s'\n", answer.UTF8String) ;
-//         if ([answer hasPrefix:@"+version:"]) {
         if ([answer hasPrefix:@"version:"]) {
             CFMessagePortContext ctx = { 0, (__bridge void *)self, NULL, NULL, NULL } ;
             Boolean error = false ;
@@ -185,31 +188,12 @@ static const char *portError(SInt32 code) {
         }
 
         if ([self registerWithRemote]) {
+            NSTimer *keepAlive = [NSTimer timerWithTimeInterval:2.0 target:self selector:@selector(checkRemoteConnection:) userInfo:nil repeats:YES] ;
+            [[NSRunLoop currentRunLoop] addTimer:keepAlive forMode:NSDefaultRunLoopMode] ;
+
             BOOL keepRunning = YES ;
             _exitCode = EX_OK ;
-            while(keepRunning && ([[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:2]])) {
-                if (!CFMessagePortIsValid(_remotePort) && _autoReconnect) {
-                    fprintf(stderr, "Message port has become invalid.  Attempting to re-establish.\n") ;
-                    CFMessagePortRef newPort = NULL ;
-                    NSUInteger count = 0 ;
-                    while (!newPort && count < 5) {
-                        sleep(2) ;
-                        newPort = CFMessagePortCreateRemote(NULL, (__bridge CFStringRef)_remoteName) ;
-                        if (newPort) {
-                            CFRelease(_remotePort) ;
-                            _remotePort = newPort ;
-                            if ([self registerWithRemote]) fprintf(stderr, "Re-established.\n") ;
-
-                        } else {
-                            count++ ;
-                        }
-                    }
-                    if (!newPort) {
-                        fprintf(stderr, "error: can't access Hammerspoon; is it running?\n") ;
-                        _exitCode = EX_UNAVAILABLE ;
-                        [self cancel] ;
-                    }
-                }
+            while(keepRunning && ([[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantFuture]])) {
                 if (_exitCode != EX_OK)  {
                     keepRunning = NO ;
                 } else {
@@ -217,12 +201,39 @@ static const char *portError(SInt32 code) {
                 }
             }
             [self unregisterWithRemote] ;
+            if (keepAlive.valid) [keepAlive invalidate] ;
         } else {
             _exitCode = EX_UNAVAILABLE ;
             [self cancel] ;
             return ;
         }
     } ;
+}
+
+- (void)checkRemoteConnection:(NSTimer *)timer {
+    if (!CFMessagePortIsValid(_remotePort) && _autoReconnect) {
+        fprintf(stderr, "Message port has become invalid.  Attempting to re-establish.\n") ;
+        CFMessagePortRef newPort = NULL ;
+        NSUInteger count = 0 ;
+        while (!newPort && count < 5) {
+            sleep(2) ;
+            newPort = CFMessagePortCreateRemote(NULL, (__bridge CFStringRef)_remoteName) ;
+            if (newPort) {
+                CFRelease(_remotePort) ;
+                _remotePort = newPort ;
+                if ([self registerWithRemote]) fprintf(stderr, "Re-established.\n") ;
+            } else {
+                count++ ;
+            }
+        }
+        if (!newPort) {
+            fprintf(stderr, "error: can't access Hammerspoon; is it running?\n") ;
+            _exitCode = EX_UNAVAILABLE ;
+            [self cancel] ;
+            [self performSelector:@selector(poke:) onThread:self withObject:nil waitUntilDone:NO] ;
+            if (timer.valid) [timer invalidate] ;
+        }
+    }
 }
 
 - (void)poke:(__unused id)obj {
@@ -358,7 +369,7 @@ static const char *portError(SInt32 code) {
 
 @end
 
-static char * dupstr (char* s) {
+static char *dupstr (const char* s) {
   char *r;
 
   r = (char*) malloc ((strlen (s) + 1));
@@ -396,6 +407,7 @@ static char *hs_completion_generator(const char* text, int state) {
         NSString *answer = items[index] ;
         index++ ;
 
+        // the generator function must return a copy of the string since ARC will clear the NSString
         return dupstr(answer.UTF8String) ;
     } else {
         return ((char *)NULL) ;
@@ -405,7 +417,7 @@ static char *hs_completion_generator(const char* text, int state) {
 static char** hs_completion(const char * text , __unused int start,  __unused int end) {
 // we want our completion handler no matter where we are in the line
     rl_attempted_completion_over   = 1 ;
-    return rl_completion_matches ((char*)text, &hs_completion_generator) ;
+    return rl_completion_matches ((const char*)text, &hs_completion_generator) ;
 }
 
 static void printUsage(const char *cmd) {
@@ -687,8 +699,7 @@ int main()
         if (core.remotePort && !core.cancelled) {
             [core cancel] ;
             // cancel does not break the runloop, so poke it to wake it up
-            // we wait when we have a local port to unregister; in legacy mode we don't need to
-            [core performSelector:@selector(poke:) onThread:core withObject:nil waitUntilDone:(core.localPort ? YES : NO)] ;
+            [core performSelector:@selector(poke:) onThread:core withObject:nil waitUntilDone:YES] ;
         }
         exitCode = core.exitCode ;
         core = nil ;

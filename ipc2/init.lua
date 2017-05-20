@@ -19,7 +19,7 @@ end
 
 local timer    = require("hs.timer")
 local settings = require("hs.settings")
-local log      = require("hs.logger").new(USERDATA_TAG, "debug")
+local log      = require("hs.logger").new(USERDATA_TAG, ((USERDATA_TAG == "hs.ipc") and "error" or "debug"))
 local json     = require("hs.json")
 
 -- private variables and methods -----------------------------------------
@@ -339,7 +339,38 @@ module.__defaultHandler = function(self, msgID, msg)
             log.ef("unexpected message received: %s", msg)
         end
     elseif msgID == MSG_ID.LEGACY then
-    -- gotta think about this
+        log.df("in legacy handler")
+        local raw, str = (msg:sub(1,1) == "r"), msg:sub(2)
+
+        local originalprint = print
+        local fakestdout = ""
+        print = function(...)
+            originalprint(...)
+            local things = table.pack(...)
+            for i = 1, things.n do
+                if i > 1 then fakestdout = fakestdout .. "\t" end
+                fakestdout = fakestdout .. tostring(things[i])
+            end
+            fakestdout = fakestdout .. "\n"
+        end
+
+--        local fn = raw and rawhandler or module.handler
+        local fn = function(str)
+            local fn, err = load("return " .. str)
+            if not fn then fn, err = load(str) end
+            if fn then return fn() else return err end
+        end
+
+        local results = table.pack(pcall(function() return fn(str) end))
+
+        local str = ""
+        for i = 2, results.n do
+            if i > 2 then str = str .. "\t" end
+            str = str .. tostring(results[i])
+        end
+
+        print = originalprint
+        return fakestdout .. str
     else
         log.ef("unexpected message id received: %d, %s", msgID, msg)
     end
@@ -349,4 +380,20 @@ module.__default = module.localPort("hsCommandLine", module.__defaultHandler)
 
 -- Return Module Object --------------------------------------------------
 
-return module
+return setmetatable(module, {
+    __index = function(self, key)
+        if key == "handler" then
+            log.e("Setting a specialized handler is no longer supported in hs.ipc2. Use `hs.ipc2.remotePort` to setup your own message port for handling custom requests.")
+            return nil
+        else
+            return rawget(self, key) -- probably not necessary, but...
+        end
+    end,
+    __newindex = function(self, key, value)
+        if key == "handler" then
+            log.e("Setting a specialized handler is no longer supported in hs.ipc2. Use `hs.ipc2.remotePort` to setup your own message port for handling custom requests.")
+        else
+            rawset(self, key, value)
+        end
+    end,
+})
