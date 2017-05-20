@@ -16,9 +16,9 @@
 
 // MAYBE:
 //   different color for returned values? Currently uses output color
-//   Prompt for launch Hammerspoon?
-//     How do we wait until it's actually running? Since the only check we really have is whether the module is loaded or not
-//   flag to suppress prompt?
+// * Prompt for launch Hammerspoon?
+// *   How do we wait until it's actually running? Since the only check we really have is whether the module is loaded or not
+// * flag to suppress prompt?
 
 
 @import AppKit ;
