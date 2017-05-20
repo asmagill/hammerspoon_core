@@ -21,6 +21,7 @@
 //   flag to suppress prompt?
 
 
+@import AppKit ;
 @import Foundation ;
 @import CoreFoundation ;
 @import Darwin.sysexits ;
@@ -33,8 +34,6 @@ static const CFStringRef hammerspoonBundle = CFSTR("org.hammerspoon.Hammerspoon"
 @class HSClient ;
 
 static HSClient          *core = nil ;
-
-// #define DEBUG
 
 #define MSGID_REGISTER   100
 #define MSGID_UNREGISTER 200
@@ -424,21 +423,20 @@ static void printUsage(const char *cmd) {
     printf("\n") ;
     printf("usage: %s [arguments] [file]\n", cmd) ;
     printf("\n") ;
+    printf("    -A         Auto launch Hammerspoon if it is not currently running.  The default behavior is to prompt the user for confirmation before launching.\n") ;
     printf("    -c cmd     Specifies a Hammerspoon command to execute. May be specified more than once and commands will be executed in the order they appear. Disables colorized output unless -N is present. Disables interactive mode unless -i is present. If -i is present or if stdin is a pipe, these commands will be executed first.\n") ;
-    printf("    -C         Enable print cloning from the Hammerspoon Console to this instance. Disables -P. Unlike modifying `_cli.console` within an instance, this setting will persist if the instance has to reconnect.\n") ;
+    printf("    -C         Enable print cloning from the Hammerspoon Console to this instance. Disables -P.\n") ;
     printf("    -h         Displays this help and exits.\n") ;
-    printf("    -i         Enable interactive mode. Default unless -c argument is present. In interactive mode, if the connection to Hammerspoon becomes invalid, usually because Hammerspoon has been reloaded, this tool will attempt to reconnect when submitting the user input before exiting with an error.\n") ;
-    printf("    -m name    Specify the remote port to connect to. Defaults to %s.\n", defaultPortName.UTF8String) ;
-    printf("    -n         Disable colorized output. Automatic if stdin is a pipe, output is redirected, or as specified below.\n") ;
+    printf("    -i         Enable interactive mode. Default unless -c argument is present, stdin is a pipe, output is redirected, or if a file path is specified.\n") ;
+    printf("    -m name    Specify the name of the remote port to connect to. Defaults to %s.\n", defaultPortName.UTF8String) ;
+    printf("    -n         Disable colorized output. Automatic if stdin is a pipe, output is redirected, or if a file path is specified.\n") ;
     printf("    -N         Force colorized output even when it would normally not be enabled.\n") ;
-    printf("    -P         Enable print mirroring from this instance to the Hammerspoon Console. Disables -C. Unlike modifying `_cli.console` within an instance, this setting will persist if the instance has to reconnect.\n") ;
+    printf("    -P         Enable print mirroring from this instance to the Hammerspoon Console. Disables -C.\n") ;
     printf("    -q         Enable quiet mode.  In quiet mode, the only output to the instance will be errors and the final result of any command executed.\n") ;
     printf("    -s         Read stdin for the contents to execute and exit.  Included for backwards compatibility as this tool now detects when stdin is a pipe automatically. Disables colorized output unless -N is present. Disables interactive mode.\n") ;
     printf("    -t sec     Specifies the send and receive timeouts in seconds.  Defaults to %f seconds.\n", defaultTimeout) ;
     printf("    --         Ignore all arguments following, allowing custom arguments to be passed into the cli instance.\n") ;
-    printf("    /path/file Specifies a file containing Hammerspoon code to load and execute. Must start with  ~, ./, or / and be a file readable by the user.  Disables colorized output unless -N is present.  Disables interactive mode unless -i is present. Like --, all arguments following are passed in unparsed.\n") ;
-    printf("\n") ;
-    printf("Within the instance, console behavior can also be modified by modifying the `_cli.console` variable.  Set this variable to true to enable print mirroring from the Hammerspoon Console to this instance. Set this variable to nil to enable print mirroring from this instance to the Hammerspoon Console (legacy behavior).  Set this variable to false (the default) to disable print mirroring in either direction. This change does not carry over if the instance has to reconnect to Hammerspoon because of a reload or lost connection.\n") ;
+    printf("    /path/file Specifies a file containing Hammerspoon code to load and execute. Must start with  ~, ./, or / and be a file readable by the user.  Disables colorized output unless -N is present.  Disables interactive mode unless -i is present. Like --, all arguments after this are passed in unparsed.\n") ;
     printf("\n") ;
     printf("Within the instance, all arguments passed to the %s executable are available as strings in the `_cli._args` array.  If the -- argument or a file path is present, that argument and all arguments that follow will be available as strings in the `_cli.args` array; otherwise the `_cli.args` array will be a mirror of `_cli._args`.\n", cmd) ;
     printf("\n") ;
@@ -461,6 +459,7 @@ int main()
         BOOL           readFile    = NO ;
         BOOL           interactive = !readStdIn ;
         BOOL           useColors   = interactive && (BOOL)isatty(STDOUT_FILENO) ;
+        BOOL           autoLaunch  = NO ;
         NSString       *portName   = defaultPortName ;
         NSString       *fileName   = nil ;
 
@@ -486,6 +485,8 @@ int main()
                 interactive = NO ;
                 readStdIn   = YES ;
                 if (!seenColors) useColors = NO ;
+            } else if ([args[idx] isEqualToString:@"-A"]) {
+                autoLaunch = YES ;
             } else if ([args[idx] isEqualToString:@"-n"]) {
                 useColors = NO ;
             } else if ([args[idx] isEqualToString:@"-N"]) {
@@ -548,17 +549,44 @@ int main()
             idx++ ;
         }
 
-#ifdef DEBUG
-        fprintf(stderr, "DEBUG\treadStdIn:   %s\n", (readStdIn   ? "Yes" : "No")) ;
-        fprintf(stderr, "DEBUG\tinteractive: %s\n", (interactive ? "Yes" : "No")) ;
-        fprintf(stderr, "DEBUG\tuseColors:   %s\n", (useColors   ? "Yes" : "No")) ;
-        fprintf(stderr, "DEBUG\tportName:    %s\n", portName.UTF8String) ;
-        fprintf(stderr, "DEBUG\ttimeout:     %f\n", timeout) ;
-        fprintf(stderr, "DEBUG\texplicit commands:\n") ;
-        for (NSUInteger i = 0 ; i < preRun.count ; i++) {
-            fprintf(stderr, "DEBUG\t%2lu. %s\n", i + 1, preRun[i].UTF8String) ;
+
+        NSArray *ra = [NSRunningApplication runningApplicationsWithBundleIdentifier:(__bridge NSString *)hammerspoonBundle] ;
+        if (ra.count == 0) {
+            BOOL launchHS = autoLaunch ;
+            if (!autoLaunch) {
+                NSAlert *alert = [[NSAlert alloc] init] ;
+                [alert addButtonWithTitle:@"Launch"] ;
+                [alert addButtonWithTitle:@"Cancel"] ;
+                alert.messageText = @"Hammerspoon is not running" ;
+                alert.informativeText = @"Hammerspoon is not running. Would you like to launch it now?" ;
+                NSString *imagePath = [[NSWorkspace sharedWorkspace] absolutePathForAppBundleWithIdentifier:(__bridge NSString *)hammerspoonBundle];
+                alert.icon = [[NSWorkspace sharedWorkspace] iconForFile:imagePath] ;
+                alert.alertStyle = NSCriticalAlertStyle ;
+                NSModalResponse response = [alert runModal] ;
+                if (response != NSAlertFirstButtonReturn) exit(EX_UNAVAILABLE) ;
+                launchHS = YES ;
+                // necessary to clear the alert from the screen; otherwise it persists until you hit enter in the terminal window
+                [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:1]] ;
+
+            }
+            if (launchHS && ![[NSWorkspace sharedWorkspace] launchAppWithBundleIdentifier:(__bridge NSString *)hammerspoonBundle options:NSWorkspaceLaunchWithoutActivation additionalEventParamDescriptor:nil launchIdentifier:NULL]) exit(EX_UNAVAILABLE) ;
+
+            NSUInteger count = 0 ;
+            BOOL       notReady = YES ;
+            while (notReady && count < 10) {
+                CFMessagePortRef test = CFMessagePortCreateRemote(NULL, (__bridge CFStringRef)portName) ;
+                if (test) {
+                    notReady = NO ;
+                    CFRelease(test) ;
+                }
+                sleep(1) ;
+                count++ ;
+            }
+            if (notReady) {
+                fprintf(stderr, "error: can't access Hammerspoon message port %s; is it running with the ipc2 module loaded?\n", portName.UTF8String) ;
+                exit(EX_UNAVAILABLE) ;
+            }
         }
-#endif
 
         core = [[HSClient alloc] initWithRemote:portName inColor:useColors] ;
 
@@ -571,15 +599,8 @@ int main()
 
         core.arguments   = args ;
 
-#ifdef DEBUG
-        fprintf(stderr, "DEBUG\tCLI local port %s\n", core.localName.UTF8String) ;
-#endif
-
         [core start] ;
 
-#ifdef DEBUG
-        printf("DEBUG\tWaiting for background thread to start\n") ;
-#endif
         while (core.exitCode == EX_TEMPFAIL) ;
 
         if (core.exitCode == EX_OK && !core.localPort)
