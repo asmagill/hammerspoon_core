@@ -1,0 +1,41 @@
+[
+  {
+    "Constant" : [
+
+    ],
+    "submodules" : [
+
+    ],
+    "Function" : [
+
+    ],
+    "Variable" : [
+
+    ],
+    "stripped_doc" : [
+
+    ],
+    "Deprecated" : [
+
+    ],
+    "desc" : "Stuff about the module",
+    "type" : "Module",
+    "Constructor" : [
+
+    ],
+    "doc" : "Stuff about the module",
+    "Method" : [
+
+    ],
+    "Command" : [
+
+    ],
+    "items" : [
+
+    ],
+    "Field" : [
+
+    ],
+    "name" : "hs.canvas.gesture"
+  }
+]
