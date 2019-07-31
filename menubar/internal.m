@@ -500,7 +500,14 @@ static void geom_pushrect(lua_State* L, NSRect rect) {
 ///  * A hidden menubaritem can be added to the system menubar by calling hs.menubar:returnToMenuBar() or used as a pop-up menu by calling hs.menubar:popupMenu().
 static int menubarNew(lua_State *L) {
     NSStatusBar *statusBar = [NSStatusBar systemStatusBar];
-    NSStatusItem *statusItem = [statusBar statusItemWithLength:NSVariableStatusItemLength];
+
+
+    NSStatusItem *statusItem ;
+    if (lua_isboolean(L, 1) && !lua_toboolean(L, 1)) {
+        statusItem = [[NSStatusItem alloc] init] ;
+    } else {
+        statusItem = [statusBar statusItemWithLength:NSVariableStatusItemLength];
+    }
 
     if (statusItem) {
         menubaritem_t *menuBarItem = lua_newuserdata(L, sizeof(menubaritem_t));
@@ -518,7 +525,6 @@ static int menubarNew(lua_State *L) {
         lua_setmetatable(L, -2);
 
         if (lua_isboolean(L, 1) && !lua_toboolean(L, 1)) {
-              [statusBar removeStatusItem:statusItem];
               menuBarItem->removed = YES ;
         }
     } else {
@@ -981,9 +987,18 @@ static int menubar_removeFromMenuBar(lua_State *L) {
 
     if (!menuBarItem->removed) {
         NSStatusBar   *statusBar   = [NSStatusBar systemStatusBar];
-        NSStatusItem  *statusItem  = (__bridge NSStatusItem*)menuBarItem->menuBarItemObject;
+        NSStatusItem  *oldStatusItem  = (__bridge_transfer NSStatusItem*)menuBarItem->menuBarItemObject;
+        NSStatusItem  *newStatusItem = [[NSStatusItem alloc] init] ;
 
-        [statusBar removeStatusItem:statusItem];
+        menuBarItem->menuBarItemObject = (__bridge_retained void*)newStatusItem;
+        [newStatusItem  setTarget:[oldStatusItem target]] ;
+        [newStatusItem  setAction:[oldStatusItem action]] ;
+        [newStatusItem    setMenu:[oldStatusItem menu]] ;
+        [newStatusItem   setTitle:[oldStatusItem title]] ;
+        [newStatusItem   setImage:[oldStatusItem image]] ;
+        [newStatusItem setToolTip:[oldStatusItem toolTip]] ;
+
+        [statusBar removeStatusItem:oldStatusItem];
         menuBarItem->removed = YES ;
     }
 
