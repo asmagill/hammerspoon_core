@@ -1,3 +1,7 @@
+***Archiving to consolidate work in [hammerspoon_asm](https://github.com/asmagill/hammerspoon_asm)***
+
+To keep things better organized (for me) on my development machine, this repository is being archived; future module work for Hammerspoon will occur in aptly name repositories and can be linked to or found at https://github.com/asmagill/hammerspoon_asm.
+
 Pre-Release and In progress Core Hammerspoon Modules
 ====================================================
 
